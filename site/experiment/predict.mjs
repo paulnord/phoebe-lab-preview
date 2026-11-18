@@ -1,4 +1,4 @@
-import {makeDiscModel,makePairModel} from './discs.mjs?v=9fb6eae595c41531';
+import {makeDiscModel,makePairModel} from './discs.mjs?v=55a956a80f13dcfd';
 // Coefficients are referenced to sample zero (phase -0.5).
 export function makePredictor(spec) {
   const {keys, bounds, n, harmonics: h, terms, fixed} = spec;

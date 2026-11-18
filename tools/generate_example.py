@@ -24,6 +24,8 @@ dataset = dict(name='Example binary', synthetic=True, x_kind='phase', y_kind='fl
                x=x.tolist(), y=y.tolist(), sigma=sigma.tolist(), truth=truth,
                description='Synthetic PHOEBE observations with independent Gaussian noise.')
 (ROOT / 'site/example.json').write_text(json.dumps(dataset, indent=2)+'\n')
-reference = model.compute(dict(parameters=model.DEFAULTS, dataset=dataset, quality='preview'))
+phases, curve = model._raw_model(model.DEFAULTS, 'preview', phases=np.linspace(-.5,.5,513))
+comparison = model._comparison(phases,curve,dataset,model.DEFAULTS)
+reference = dict(phases=phases.tolist(), model=(curve*comparison['normalization']).tolist())
 (ROOT / 'tests/native-reference.json').write_text(json.dumps(reference, indent=2)+'\n')
-print('Generated PHOEBE example and native reference:', reference['seconds'], 'seconds')
+print('Generated PHOEBE example and the 513-point single-call native reference.')

@@ -2,7 +2,10 @@
 
 The browser calls these functions inside Pyodide. No HTTP/model server is used.
 """
+import hashlib
+import inspect
 import json
+from pathlib import Path
 import math
 import time
 from functools import lru_cache
@@ -23,6 +26,7 @@ LIMITS = {
     "omega": (0.0, 360.0), "period": (0.1, 100.0), "epoch": (-1e9, 1e9),
 }
 _bundle = None
+_last_complete = None
 
 
 def _stage(message):
@@ -82,7 +86,7 @@ def observations(dataset, p):
     return phase[order], flux[order], None if sigma is None else sigma[order]
 
 
-def _raw_model(p, quality, *, phases=None, ntriangles=None):
+def _physical_flux(p, quality, *, phases=None, ntriangles=None):
     global _bundle
     if _bundle is None:
         _stage("Building the binary-star system…")
@@ -122,7 +126,12 @@ def _raw_model(p, quality, *, phases=None, ntriangles=None):
     _stage("Comparing the model with observations…")
     if not np.isfinite(flux).all() or np.any(flux <= 0):
         raise ValueError("The current geometry did not produce a finite, positive light curve.")
-    return phases, flux / np.median(flux)
+    return phases, flux
+
+
+def _raw_model(p, quality, *, phases=None, ntriangles=None):
+    grid, flux = _physical_flux(p, quality, phases=phases, ntriangles=ntriangles)
+    return grid, flux / np.median(flux)
 
 
 def _comparison(phases, flux, dataset, p, fitted_count=0):
@@ -159,7 +168,11 @@ def compute(payload):
     p = parameters(payload.get("parameters", {}))
     quality = "refined" if payload.get("quality") == "refined" else "preview"
     phases, flux = _geometry(p, quality)
-    comparison = _comparison(phases, flux, payload["dataset"], p)
+    return _curve_result(p, quality, phases, flux, payload["dataset"], started)
+
+
+def _curve_result(p, quality, phases, flux, dataset, started, fitted_count=0):
+    comparison = _comparison(phases, flux, dataset, p, fitted_count)
     return {
         "parameters": p, "quality": quality, "phases": phases.tolist(),
         "model": (flux * comparison["normalization"]).tolist(),
@@ -168,15 +181,113 @@ def compute(payload):
     }
 
 
-def fit(payload):
-    from scipy.optimize import least_squares
+def _phase_batches(surface=False):
+    """Indices on the final grid. Each batch is spread across the orbit."""
+    first_step = 128 if surface else 8
+    batch_size = 8 if surface else 64
+    yield 512 // first_step + 1, tuple(range(0, 513, first_step))
+    step = first_step
+    while step > 1:
+        step //= 2
+        new = range(step, 512, 2 * step)
+        # Interleave new samples around the orbit so each update covers both eclipses.
+        chunks = max(1, len(new) // batch_size)
+        for offset in range(chunks):
+            yield 512 // step + 1, tuple(new[offset::chunks])
+
+
+@lru_cache(maxsize=64)
+def _phase_flux(values, quality, indices):
+    phases = np.asarray(indices, dtype=float) / 512 - .5
+    _, flux = _physical_flux(dict(values), quality, phases=phases)
+    return flux
+
+
+@lru_cache(maxsize=1)
+def _surface_references():
+    path = Path(__file__).with_name("surface-references.json")
+    if not path.is_file():
+        return []
+    data = json.loads(path.read_text())
+    physics = hashlib.sha256(inspect.getsource(_physical_flux).encode()).hexdigest()
+    if (data["version"] != phoebe.__version__ or data.get("physics_sha256") != physics
+            or data["triangles"] != 400 or data["passband"] != "Johnson:V"
+            or not np.array_equal(data["phases"], np.linspace(-.5, .5, 513))):
+        return []
+    passband = phoebe.list_installed_passbands(full_dict=True)["Johnson:V"]["fname"]
+    if hashlib.sha256(Path(passband).read_bytes()).hexdigest() != data["passband_sha256"]:
+        return []
+    return data["references"]
+
+
+def progressive_curve(payload, fitted_count=0):
+    """Yield successive exact display curves, then a complete scientific result."""
+    global _last_complete
     started = time.perf_counter()
+    p = parameters(payload.get("parameters", {}))
+    quality = "refined" if payload.get("quality") == "refined" else "preview"
+    values = tuple(sorted((k, v) for k, v in p.items() if k != "epoch"))
+    surface = p["distortion"] or p["irradiation"]
+    if surface and quality == "preview":
+        for saved in _surface_references():
+            if all(saved["parameters"][key] == value for key, value in values):
+                result = _curve_result(p, quality, np.linspace(-.5, .5, 513), np.asarray(saved["flux"]),
+                                       payload["dataset"], started, fitted_count)
+                result["source"] = "stored_exact"
+                yield {"type": "result", "result": result}
+                return
+    geometry_key = (quality, values)
+    if _last_complete is not None and _last_complete[0] == geometry_key:
+        phases, flux = _last_complete[1:]
+        result = _curve_result(p, quality, phases, flux, payload["dataset"], started, fitted_count)
+        result["source"] = "reused_geometry"
+        yield {"type": "result", "result": result}
+        return
+    physical = np.full(513, np.nan)
+    pending = list(_phase_batches(surface))
+    width = max(1, min(8, int(payload.get("workers", 1)))) if surface else 1
+    first = True
+    while pending:
+        wave = pending[:1 if first else width]
+        del pending[:len(wave)]
+        first = False
+        if len(wave) > 1:
+            groups = [indices for _, indices in wave]
+            fluxes = yield {"type": "work", "groups": groups, "parameters": p, "quality": quality}
+            if len(fluxes) != len(groups):
+                raise ValueError("Incomplete PHOEBE worker response.")
+        else:
+            fluxes = [_phase_flux(values, quality, wave[0][1])]
+        for (target, indices), samples in zip(wave, fluxes):
+            samples = np.asarray(samples)
+            if samples.shape != (len(indices),) or not np.all(np.isfinite(samples) & (samples > 0)):
+                raise ValueError("Invalid PHOEBE worker flux.")
+            physical[list(indices)] = samples
+            present = np.flatnonzero(np.isfinite(physical))
+            phases = present / 512 - .5
+            flux = physical[present]
+            normalized = flux / np.median(flux)
+            result = _curve_result(p, quality, phases, normalized, payload["dataset"], started, fitted_count)
+            if len(present) == 513:
+                _last_complete = (geometry_key, phases, normalized)
+                yield {"type": "result", "result": result}
+            else:
+                yield {"type": "partial", "phases": result["phases"], "model": result["model"], "target": target}
+
+
+def worker_flux(payload):
+    values = tuple(sorted((k, v) for k, v in parameters(payload["parameters"]).items() if k != "epoch"))
+    return _phase_flux(values, payload["quality"], tuple(payload["indices"])).tolist()
+
+
+def _fit_parameters(payload):
+    from scipy.optimize import least_squares
     initial = parameters(payload.get("parameters", {}))
     keys = payload.get("fit", [])
     allowed = {"inclination", "radius_primary", "radius_secondary", "temperature_ratio"}
     if not 1 <= len(keys) <= 2 or len(set(keys)) != len(keys) or not set(keys) <= allowed:
         raise ValueError("Choose one or two supported parameters for the local fit.")
-    x, y, sigma = observations(payload["dataset"], initial)
+    _, _, sigma = observations(payload["dataset"], initial)
     best = {"cost": float("inf"), "parameters": initial}
     evaluations = 0
 
@@ -205,14 +316,31 @@ def fit(payload):
         bounds=([LIMITS[key][0] for key in keys], [LIMITS[key][1] for key in keys]),
         diff_step=2e-3, x_scale="jac", max_nfev=12, ftol=2e-4, xtol=2e-4, gtol=2e-4,
     )
-    output = compute(dict(payload, parameters=best["parameters"], quality="preview"))
-    phases, curve = np.asarray(output["phases"]), np.asarray(output["model"])
-    # compute() has already normalized the curve; the next best scale is unity.
-    output["comparison"] = _comparison(phases, curve, payload["dataset"], best["parameters"], len(keys))
-    output["fit"] = {"parameters": keys, "evaluations": evaluations,
-                     "converged": bool(result.success), "message": str(result.message)}
-    output["seconds"] = time.perf_counter() - started
-    return output
+    info = {"parameters": keys, "evaluations": evaluations, "objective_phases": 81,
+            "objective_triangles": 400, "converged": bool(result.success), "message": str(result.message)}
+    return best["parameters"], info
+
+
+def progressive_fit(payload):
+    started = time.perf_counter()
+    best, info = _fit_parameters(payload)
+    yield {"type": "fit_parameters", "parameters": best}
+    curve = progressive_curve(dict(payload, parameters=best), fitted_count=len(info["parameters"]))
+    response = None
+    while True:
+        update = curve.send(response)
+        if update["type"] == "result":
+            update["result"]["fit"] = info
+            update["result"]["seconds"] = time.perf_counter() - started
+            yield update
+            return
+        response = yield update
+
+
+def fit(payload):
+    for update in progressive_fit(dict(payload, workers=1)):
+        if update["type"] == "result":
+            return update["result"]
 
 
 def dispatch_json(text):

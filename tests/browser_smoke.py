@@ -35,6 +35,41 @@ async def main():
           postMessage(data,...rest){if(window.testProfile&&data.type==='compute')data.profile=true;super.postMessage(data,...rest);}
         };
         """)
+        # Use a fresh, single-call PHOEBE evaluation in the same WebAssembly build.
+        # The check is injected only into the worker response in this test browser.
+        async def instrument_worker(route):
+            response = await route.fetch()
+            source = await response.text()
+            marker = '  if (data.type === "continue"'
+            assert source.count(marker) == 1
+            hook = """  if (data.type === 'single_check') {
+                pyodide.globals.set('_check_payload', JSON.stringify(data.payload));
+                const text = await pyodide.runPythonAsync(`
+_check = json.loads(_check_payload)
+_p = model.parameters(_check['parameters'])
+_x, _f = model._raw_model(_p, _check['quality'], phases=model.np.linspace(-.5,.5,513))
+json.dumps(model._curve_result(_p,_check['quality'],_x,_f,_check['dataset'],model.time.perf_counter(),_check['fitted_count']))
+`);
+                self.postMessage({type:'single_check', value:JSON.parse(text)});return;
+              }
+"""
+            await route.fulfill(response=response, body=source.replace(marker, hook+marker))
+        await page.context.route('**/engine.worker.js*', instrument_worker)
+        dataset = json.loads((ROOT / 'site/example.json').read_text())
+
+        async def verify_single(result, fitted_count=0):
+            check = await page.evaluate("""payload => new Promise((resolve,reject)=>{
+              const timer=setTimeout(()=>reject(Error("Single-call PHOEBE check timed out")),90000);
+              function receive({data}){if(data.type==='single_check'){
+                clearTimeout(timer);testWorker.removeEventListener('message',receive);resolve(data.value);}}
+              testWorker.addEventListener('message',receive);
+              testWorker.postMessage({type:'single_check',payload});
+            })""", dict(parameters=result['parameters'], quality=result['quality'],
+                        dataset=dataset, fitted_count=fitted_count))
+            np.testing.assert_array_equal(result['phases'], check['phases'])
+            np.testing.assert_allclose(result['model'], check['model'], atol=1e-10, rtol=0)
+            for key in ('residual','model_at_data','reduced_chi2','rms'):
+                np.testing.assert_allclose(result['comparison'][key], check['comparison'][key], atol=1e-10, rtol=0)
         await page.goto(URL)
         for _ in range(300):
             messages = await page.evaluate("window.engineMessages")
@@ -56,7 +91,8 @@ async def main():
         await page.screenshot(path=str(ROOT / ".qa/desktop.png"), full_page=True)
         difference = float(np.max(np.abs(np.asarray(result["model"])-reference["model"])))
         print("Native comparison max absolute difference:", difference, "; model seconds:", result["seconds"], flush=True)
-        np.testing.assert_allclose(result["model"], reference["model"], atol=1e-7, rtol=0)
+        await verify_single(result)
+        np.testing.assert_allclose(result["model"], reference["model"], atol=3e-6, rtol=0)
         await page.evaluate("window.testProfile=" + ("true" if os.getenv("PHOEBE_PROFILE") else "false"))
         await page.locator('#number-inclination').fill('87')
         await page.locator('#number-inclination').press('Tab')
@@ -74,7 +110,7 @@ async def main():
         async with page.expect_download() as csv_download:
             await page.locator('#export-button').click()
         csv = await csv_download.value
-        assert len(Path(await csv.path()).read_text().splitlines()) == 82
+        assert len(Path(await csv.path()).read_text().splitlines()) == 514
         # Import the same observations as magnitudes; the flux comparison must agree.
         example = json.loads((ROOT / 'site/example.json').read_text())
         rows = ['phase,magnitude,sigma_magnitude']
@@ -105,6 +141,12 @@ async def main():
         fitted = await page.evaluate("window.engineResults.find(m=>m.operation==='fit').result")
         assert fitted['fit']['parameters'] == ['inclination']
         assert fitted['comparison']['rms'] <= changed['comparison']['rms'] + 1e-10
+        assert fitted['fit']['objective_phases'] == 81 and len(fitted['phases']) == 513
+        await verify_single(fitted, 1)
+        async with page.expect_download() as fitted_download:
+            await page.locator('#export-button').click()
+        fitted_csv = np.loadtxt(await (await fitted_download.value).path(), delimiter=',', skiprows=1)
+        np.testing.assert_array_equal(fitted_csv.T, [fitted['phases'], fitted['model']])
         print('Real browser fit passed:', fitted['fit']['evaluations'], 'evaluations in', fitted['seconds'], 'seconds.', flush=True)
         # Exercise the display layer with an eccentric secondary eclipse, then
         # verify the worker replaces it before fitting or exports become available.

@@ -1,3 +1,4 @@
+import {eccentricOrbit} from './eccentric-orbit.mjs?v=9fd4b9384af148c1';
 // Integrate limb-darkened annuli behind the foreground disc. Radii and center
 // separation are in units of the semimajor axis. The area helper returns area/pi.
 export function overlap(d,r,s) {
@@ -10,7 +11,7 @@ export function overlap(d,r,s) {
   return (r*r*Math.acos(ca)+s*s*Math.acos(cb)-.5*Math.sqrt(Math.max(0,radical)))/Math.PI;
 }
 
-export function makeDiscModel(table,n) {
+export function makeDiscModel(table,n,reference=null) {
   const {teffs,gravities,radii,base_logg,primary_teff}=table;
   const raw=atob(table.log_intensity_f32le);
   const data=new DataView(Uint8Array.from(raw,c=>c.charCodeAt(0)).buffer);
@@ -53,11 +54,33 @@ export function makeDiscModel(table,n) {
   }
   return function(p) {
     const r1=p.radius_primary,r2=p.radius_secondary;
-    const star1=profile(primary_teff,base_logg[0]-2*Math.log10(r1),r1);
-    const star2=profile(primary_teff*p.temperature_ratio,base_logg[1]-2*Math.log10(r2),r2);
+    let g1=base_logg[0]-2*Math.log10(r1),g2=base_logg[1]-2*Math.log10(r2);
+    let atEdge=false;
+    if(reference) {
+      // Kepler’s third law at fixed primary mass. Fractional radii scale with a.
+      const logA=(Math.log10((1+p.mass_ratio)/(1+reference.mass_ratio))+2*Math.log10(p.period/reference.period))/3;
+      g1-=2*logA;
+      g2+=Math.log10(p.mass_ratio/reference.mass_ratio)-2*logA;
+      const edge=g=>Math.max(gravities[0],Math.min(gravities.at(-1),g));
+      atEdge=g1!==edge(g1) || g2!==edge(g2);g1=edge(g1);g2=edge(g2);
+    }
+    const star1=profile(primary_teff,g1,r1);
+    const star2=profile(primary_teff*p.temperature_ratio,g2,r2);
     const total=star1.light+star2.light;
     const b=Math.cos(p.inclination*Math.PI/180);
     const model=new Array(n+1);
+    if(reference) {
+      const orbit=eccentricOrbit(p.inclination,p.eccentricity,p.omega);
+      for(let j=0;j<n;j++){
+        const {sep,primary}=orbit(phases[j]);
+        model[j]=1-(primary ? blocked(sep,star1,star2) : blocked(sep,star2,star1))/total;
+      }
+      const sorted=model.slice(0,n).sort((a,b)=>a-b);
+      const norm=(sorted[n/2-1]+sorted[n/2])/2;
+      for(let j=0;j<n;j++)model[j]/=norm;
+      model[n]=model[0];
+      return {phases,model,exploratory:true,atEdge};
+    }
     for(let j=0;j<=n/4;j++) {
       const d=Math.hypot(sine[j],b*cosine[j]);
       const primary=1-blocked(d,star1,star2)/total;

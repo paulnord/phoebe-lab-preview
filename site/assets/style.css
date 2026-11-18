@@ -12,3 +12,29 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
 @media(min-width:1101px){.topbar{position:sticky;top:0;z-index:5}.workspace{height:calc(100vh - 76px);min-height:0}.controls-panel,.main-panel{overflow-y:auto;scrollbar-width:thin}.controls-panel{padding-bottom:28px}}
 @media(max-width:760px){.bottom-grid{grid-template-columns:1fr}.stats-card{display:grid;grid-template-columns:1fr 1fr}.fit-card .fit-actions{flex-wrap:wrap}}
+
+.file-actions,.native-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.native-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:10px;margin:10px 0}.native-fields label{display:grid;gap:4px;font-size:12px}.native-fields input,.native-fields select{width:100%;min-width:0;padding:6px}.native-fields input:disabled{opacity:.65}#native-dialog{width:min(660px,95vw);max-height:90vh;overflow-y:auto}#native-controls{border:1px solid #ddd9e6;margin:12px 0;padding:12px;border-radius:8px}#native-plot{width:100%;height:190px}#native-status[aria-invalid=true]{color:#9d312f}#native-dialog [hidden]{display:none}
+
+#advanced-panel {margin:1rem 0;padding:1rem;border:1px solid #ddd9e6;border-radius:8px}
+#advanced-panel h3 {margin:0}
+#adv-parameters,#adv-input>* {width:100%;max-width:100%;box-sizing:border-box}
+#adv-parameters {margin:.3rem 0;font:13px monospace}
+#adv-label,#adv-count {display:block;font-size:.85rem;overflow-wrap:anywhere}
+#adv-detail {padding:.6rem 0}
+#adv-input input,#adv-input select,#adv-input textarea {padding:.4rem}
+#adv-help {display:block;margin:.4rem 0;color:#5a5467}
+#advanced-panel details {margin-top:.8rem}
+#adv-report {white-space:pre-wrap;overflow-wrap:anywhere}
+.dataset-strip .example-picker {display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin-left:auto}
+.example-picker label {font-size:.78rem}
+.example-picker select {max-width:100%;padding:.3rem;border:1px solid #d7d4df;border-radius:4px;background:white;color:inherit}
+@media(max-width:620px){.dataset-strip{flex-wrap:wrap}.dataset-strip .example-picker{margin-left:0}}
+
+#time-curve {width:100%;height:145px;display:block}
+#time-panel[hidden] {display:none}
+
+.value-box input.time-value {width:13ch}
+.slider-zoom {display:flex;gap:.5rem;align-items:center;font-size:.75rem;color:var(--muted)}
+.slider-zoom select,#surface-workers {font:inherit;padding:.2rem;border:1px solid #d7d4df;border-radius:4px;background:white;color:var(--ink)}
+
+.slider-zoom[hidden], #range-epoch[hidden] {display:none}
