@@ -1,0 +1,7 @@
+{
+  "curve_rms": 0.005,
+  "point_max": 0.035,
+  "depth_max": 0.03,
+  "width_max_cycles": 0.005,
+  "surface": "Require every exact held-out curve in an enabled slice to pass both flux limits, recovered modulation in the 30-degree example, and lower RMS than the spherical predictor for each enabled mode. Use resolved geometric eclipses for width/depth. Broad eight-dimensional fits remain research candidates pending coverage across physical failures and independent validation."
+}

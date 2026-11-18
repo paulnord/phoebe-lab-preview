@@ -61,10 +61,15 @@ non-irradiated combinations inside the UI ranges. It solves the eccentric orbit
 with limb-darkened discs and applies the trained eight-slider Fourier correction. Mass ratio and period affect surface gravity. The legend
 says when gravity is clamped at the atmosphere table edge. Exact PHOEBE can reject
 some settings, in which case CSV export, fit and residual statistics stay unavailable.
-With tides or irradiation selected, an amber spherical estimate follows the sliders
-and identifies the omitted effects until the first exact surface calculation returns.
 Turning an effect off restores a matching completed exact result immediately if
 available. Eight results are retained for the current observation dataset.
+
+On two measured parameter slices, the amber drag curve includes Roche tides,
+Horvat irradiation, or both. Load **Non-eclipsing binary (30°)** and drag
+inclination between 18° and 46° to try it. The legend identifies the effects
+included. Where only a spherical preview is available, its label lists the omitted effects.
+On release the exact worker computes the curve for comparison and export.
+[Study results and supported settings](benchmarks/literature-surfaces/REPORT.md)
 
 ## Radial velocities
 

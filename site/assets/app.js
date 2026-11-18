@@ -22,7 +22,7 @@ const GROUPS = [
 const state = {parameters:{...DEFAULTS},quality:'preview',dataset:null,result:null,revision:0,ready:false,busy:false,fitting:false,queued:false,worker:null,request:0,current:null};
 let computeTimer,toastTimer,parsedFile,exampleRequest=0;
 const parameterInputs = new Map();
-let predictDisplay = null, dragView = null, pointerHeld = false;
+let predictSurface = null, predictDisplay = null, dragView = null, pointerHeld = false;
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
 const exactHistory = new Map();
@@ -70,10 +70,11 @@ function approximateView() {
   const omitted=[p.distortion && 'tides',p.irradiation && 'heating'].filter(Boolean);
   if (!state.dataset || !predictDisplay || (state.quality!=='preview' && !omitted.length)) return null;
   // Epoch places observations in phase. The phase-domain geometry uses a relative origin.
-  const curve=predictDisplay({...p,epoch:0,distortion:false,irradiation:false});
+  const surface=state.quality==='preview' && predictSurface?.(p);
+  const curve=surface || predictDisplay({...p,epoch:0,distortion:false,irradiation:false});
   if (!curve) return null;
   const scaled=compareDisplayCurve(curve, normalizedData());
-  return {...curve,...scaled,exploratory:!!(omitted.length||curve.exploratory),omitted};
+  return {...curve,...scaled,exploratory:!!(omitted.length||curve.exploratory),omitted:surface ? [] : omitted};
 }
 
 // Both lists are sorted in phase. A single pass also handles the uneven grids
@@ -247,7 +248,7 @@ function parametersChanged(slider=false,physics=false,key=null) {
   liveTiming=timingRevision===state.revision ? timingDisplay() : null;
   if(timingRevision===state.revision)dragView=liveTiming?.omitted ? liveTiming : null;
   else dragView=slider || physics || state.parameters.distortion || state.parameters.irradiation ? approximateView() : null;
-  const dragLabel=dragView?.omitted?.length
+  const dragLabel=dragView?.surfaceMode ? 'Approximate surface preview · '+dragView.surfaceMode : dragView?.omitted?.length
     ? 'Approximate spherical curve · '+dragView.omitted.join(' and ')+' omitted'+(dragView.atEdge?' · atmosphere clamped':'')
     : dragView?.exploratory
     ? ['Approximate · eight-slider neural preview', dragView.periodOutside ? 'outside joint training periods' : '', dragView.atEdge ? 'atmosphere clamped' : ''].filter(Boolean).join(' · ')
@@ -684,14 +685,24 @@ const joint=makeJointPredictor(jointSpec), paired=makePredictor(artifact);
 const {makeDiscModel}=await import('../experiment/discs.mjs?v=55a956a80f13dcfd');
 const {makeEightPredictor}=await import('../experiment/eight_predict.mjs');
 const eightSpec=await (await fetch(new URL('../experiment/eight.json',import.meta.url))).json();
-const exploratory=makeEightPredictor(eightSpec,makeDiscModel(artifact.table,artifact.n,artifact.fixed));
+const discModel=makeDiscModel(artifact.table,artifact.n,artifact.fixed);
+const exploratory=makeEightPredictor(eightSpec,discModel);
+// The optional drag artifact can load alongside the exact lab.
+Promise.all([
+  import('../experiment/surface_predict.mjs'),
+  fetch(new URL('../experiment/surface.json',import.meta.url)).then(response=>{
+    if(!response.ok) throw Error(`Surface preview data returned ${response.status}`);
+    return response.json();
+  }),
+]).then(([module,specs])=>{predictSurface=module.makeSurfacePredictor(specs,discModel);})
+  .catch(error=>console.warn('Surface drag preview unavailable',error));
 const ranges=GROUPS.flatMap(group=>group.items);
 predictDisplay=p=>joint(p) ?? paired(p) ??
   (!p.distortion && !p.irradiation && ranges.every(([k,label,lo,hi])=>Number.isFinite(p[k]) && lo<=p[k] && p[k]<=hi)
     ? exploratory(p) : null);
 const coverage=document.createElement('p');
 coverage.className='muted small';
-coverage.textContent='Start from defaults. A purple drag curve supports inclination, eccentricity (0–0.24) and periastron angle together, or inclination, both radii and temperature ratio on a circular orbit. The amber network previews other eight-slider combinations. With surface effects enabled, amber shows a spherical estimate until exact PHOEBE includes the selected effects.';
+coverage.textContent='Start from defaults. A purple drag curve supports inclination, eccentricity (0–0.24) and periastron angle together, or inclination, both radii and temperature ratio on a circular orbit. The amber network previews other eight-slider combinations. Try the 30° non-eclipsing example at inclinations of 18–46° to preview tides and heating. The legend identifies any omitted effects.';
 $('parameter-controls').before(coverage);
 document.querySelector('#curve-title + span').textContent='Drag preview · purple tested / amber exploratory';
 const nativeFiles=bindNativeFiles(()=>{
