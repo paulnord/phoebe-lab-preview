@@ -52,7 +52,7 @@ def parameters(values):
     return result
 
 
-def observations(dataset, p):
+def observations(dataset, p, *, sort=True):
     x = np.asarray(dataset.get("x", []), dtype=float)
     y = np.asarray(dataset.get("y", []), dtype=float)
     if x.ndim != 1 or y.ndim != 1 or len(x) != len(y) or not 8 <= len(x) <= 5000:
@@ -82,6 +82,8 @@ def observations(dataset, p):
     else:
         phase = x.copy()
     phase = (phase + 0.5) % 1.0 - 0.5
+    if not sort:
+        return phase, flux, sigma
     order = np.argsort(phase)
     return phase[order], flux[order], None if sigma is None else sigma[order]
 
@@ -134,8 +136,8 @@ def _raw_model(p, quality, *, phases=None, ntriangles=None):
     return grid, flux / np.median(flux)
 
 
-def _comparison(phases, flux, dataset, p, fitted_count=0):
-    x, y, sigma = observations(dataset, p)
+def _comparison(phases, flux, dataset, p, fitted_count=0, *, sort=True):
+    x, y, sigma = observations(dataset, p, sort=sort)
     predicted = np.interp(x, phases, flux)
     weights = np.ones_like(y) if sigma is None else 1.0 / sigma ** 2
     normalization = float(np.sum(weights * y * predicted) / np.sum(weights * predicted ** 2))
@@ -220,7 +222,7 @@ def _surface_references():
     return data["references"]
 
 
-def progressive_curve(payload, fitted_count=0):
+def progressive_curve(payload, fitted_count=0, initial_flux=None):
     """Yield successive exact display curves, then a complete scientific result."""
     global _last_complete
     started = time.perf_counter()
@@ -228,7 +230,7 @@ def progressive_curve(payload, fitted_count=0):
     quality = "refined" if payload.get("quality") == "refined" else "preview"
     values = tuple(sorted((k, v) for k, v in p.items() if k != "epoch"))
     surface = p["distortion"] or p["irradiation"]
-    if surface and quality == "preview":
+    if surface and quality == "preview" and not fitted_count:
         for saved in _surface_references():
             if all(saved["parameters"][key] == value for key, value in values):
                 result = _curve_result(p, quality, np.linspace(-.5, .5, 513), np.asarray(saved["flux"]),
@@ -245,13 +247,20 @@ def progressive_curve(payload, fitted_count=0):
         return
     physical = np.full(513, np.nan)
     pending = list(_phase_batches(surface))
+    if initial_flux is not None:
+        count = len(initial_flux)
+        indices = tuple(range(0, 513, 512 // (count - 1)))
+        pending = [(count, indices)] + [batch for batch in pending if batch[0] > count]
     width = max(1, min(8, int(payload.get("workers", 1)))) if surface else 1
     first = True
     while pending:
         wave = pending[:1 if first else width]
         del pending[:len(wave)]
         first = False
-        if len(wave) > 1:
+        if initial_flux is not None:
+            fluxes = [initial_flux]
+            initial_flux = None
+        elif len(wave) > 1:
             groups = [indices for _, indices in wave]
             fluxes = yield {"type": "work", "groups": groups, "parameters": p, "quality": quality}
             if len(fluxes) != len(groups):
@@ -284,48 +293,92 @@ def _fit_parameters(payload):
     from scipy.optimize import least_squares
     initial = parameters(payload.get("parameters", {}))
     keys = payload.get("fit", [])
-    allowed = {"inclination", "radius_primary", "radius_secondary", "temperature_ratio"}
-    if not 1 <= len(keys) <= 2 or len(set(keys)) != len(keys) or not set(keys) <= allowed:
-        raise ValueError("Choose one or two supported parameters for the local fit.")
-    _, _, sigma = observations(payload["dataset"], initial)
-    best = {"cost": float("inf"), "parameters": initial}
+    count = payload.get("fit_phases", 129)
+    if type(count) is not int or count not in (65, 129, 513):
+        raise ValueError("Choose 65, 129 or 513 fit phases.")
+    phases = np.linspace(-.5, .5, count)
+    steps = {"inclination": .025, "radius_primary": .0002, "radius_secondary": .0002,
+             "temperature_ratio": .0005, "mass_ratio": .002, "eccentricity": .0002,
+             "omega": .1, "period": initial["period"] * .0002}
+    if not keys or len(set(keys)) != len(keys) or not set(keys) <= steps.keys():
+        raise ValueError("Select one or more distinct slider parameters.")
+    if "omega" in keys and initial["eccentricity"] == 0 and "eccentricity" not in keys:
+        raise ValueError("To fit periastron angle at zero eccentricity, also select eccentricity.")
+    dataset = payload["dataset"]
+    _, _, sigma = observations(dataset, initial, sort=False)
+    if "period" in keys and dataset.get("x_kind") == "time":
+        baseline = max(initial["period"], np.max(np.abs(np.asarray(dataset["x"]) - initial["epoch"])))
+        # Limit the phase drift of a derivative probe to a tenth of a grid interval.
+        steps["period"] = min(steps["period"], initial["period"]**2 / (10 * (count - 1) * baseline))
+    quality = "refined" if payload.get("quality") == "refined" else "preview"
+    lower = np.array([LIMITS[key][0] for key in keys])
+    upper = np.array([LIMITS[key][1] for key in keys])
+    if "omega" in keys:
+        # Search continuously through the 0/360 seam, then report the slider angle.
+        i = keys.index("omega")
+        lower[i], upper[i] = initial["omega"] - 180., initial["omega"] + 180.
+    best = {"cost": float("inf")}
     evaluations = 0
 
-    def residual(values):
+    @lru_cache(maxsize=20)
+    def evaluate(values):
         nonlocal evaluations
         evaluations += 1
-        p = dict(initial, **dict(zip(keys, map(float, values))))
-        phases, curve = _geometry(p, "preview")
-        comparison = _comparison(phases, curve, payload["dataset"], p, len(keys))
-        values = np.asarray(comparison["residual"])
+        p = dict(initial, **dict(zip(keys, values)))
+        if "omega" in keys:
+            p["omega"] %= 360.
+        geometry_key = (quality, tuple(sorted((k,v) for k,v in p.items() if k != "epoch")))
+        if _last_complete is not None and _last_complete[0] == geometry_key:
+            flux = _last_complete[2][::512 // (count - 1)]
+            seed = None  # The complete display grid is already available.
+        else:
+            _, flux = _physical_flux(p, quality, phases=phases)
+            seed = flux  # Keep absolute flux for merging with later midpoint batches.
+        # Each optimizer row must follow the same exposure as trial periods reorder phases.
+        comparison = _comparison(phases, flux / np.median(flux), dataset, p, len(keys), sort=False)
+        residual = np.asarray(comparison["residual"])
         if sigma is not None:
-            values = values / sigma
-        cost = float(np.dot(values, values))
+            residual = residual / sigma
+        cost = float(np.dot(residual, residual))
         if cost < best["cost"]:
-            best.update(cost=cost, parameters=p.copy())
+            best.update(cost=cost, parameters=p, seed=seed)
         try:
             from js import modelProgress
             modelProgress(json.dumps({"evaluation": evaluations, "rms": comparison["rms"]}))
         except ImportError:
             pass
-        return values
+        return residual
 
-    # Mesh-based derivatives benefit from finite steps larger than machine epsilon.
+    def residual(x):
+        return evaluate(tuple(map(float, x)))
+
+    def jacobian(x):
+        base = residual(x)
+        columns = []
+        for i, key in enumerate(keys):
+            probe = x.copy()
+            step = max(steps[key], 4 * np.spacing(max(1., abs(x[i]))))
+            probe[i] += step if x[i] + step <= upper[i] else -step
+            columns.append((residual(probe) - base) / (probe[i] - x[i]))
+        return np.column_stack(columns)
+
+    start = [initial[key] for key in keys]
+    residual(start)  # Include the exact starting model, even when a bound is active.
     result = least_squares(
-        residual, [initial[key] for key in keys],
-        bounds=([LIMITS[key][0] for key in keys], [LIMITS[key][1] for key in keys]),
-        diff_step=2e-3, x_scale="jac", max_nfev=12, ftol=2e-4, xtol=2e-4, gtol=2e-4,
+        residual, start, bounds=(lower, upper), jac=jacobian,
+        x_scale="jac", max_nfev=12, ftol=2e-4, xtol=1e-8, gtol=2e-4,
     )
-    info = {"parameters": keys, "evaluations": evaluations, "objective_phases": 81,
-            "objective_triangles": 400, "converged": bool(result.success), "message": str(result.message)}
-    return best["parameters"], info
+    info = {"parameters": keys, "evaluations": evaluations, "objective_phases": len(phases),
+            "objective_triangles": 1500 if quality == "refined" else 400,
+            "converged": bool(result.success), "message": str(result.message)}
+    return best["parameters"], info, best["seed"]
 
 
 def progressive_fit(payload):
     started = time.perf_counter()
-    best, info = _fit_parameters(payload)
+    best, info, seed = _fit_parameters(payload)
     yield {"type": "fit_parameters", "parameters": best}
-    curve = progressive_curve(dict(payload, parameters=best), fitted_count=len(info["parameters"]))
+    curve = progressive_curve(dict(payload, parameters=best), fitted_count=len(info["parameters"]), initial_flux=seed)
     response = None
     while True:
         update = curve.send(response)

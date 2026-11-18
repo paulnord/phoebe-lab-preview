@@ -1,6 +1,6 @@
 """End-to-end checks against real PHOEBE in a browser Web Worker.
 
-Usage: python tests/browser_smoke.py [http://127.0.0.1:8765/]
+Usage: python tests/browser_smoke.py [http://127.0.0.1:8765/] [65|129|513]
 Requires playwright and its Chromium browser. No PHOEBE installation on the host.
 """
 import asyncio
@@ -13,6 +13,8 @@ from playwright.async_api import async_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765/"
+
+FIT_PHASES = int(sys.argv[2]) if len(sys.argv) > 2 else 129
 
 async def main():
     async with async_playwright() as pw:
@@ -131,17 +133,21 @@ json.dumps(model._curve_result(_p,_check['quality'],_x,_f,_check['dataset'],mode
         await page.wait_for_function('window.engineResults.length>=4', timeout=300000)
         assert 'Example binary' in await page.locator('#dataset-name').inner_text()
         await page.locator('#fit-button').click()
-        await page.locator('input[name=fit][value=radius_primary]').check()
-        await page.locator('#fit-form button[type=submit]').click()
-        assert 'one or two' in await page.locator('#fit-error').inner_text()
-        await page.locator('input[name=fit][value=radius_primary]').uncheck()
+        fit_phases = page.locator('#fit-phases')
+        assert await fit_phases.input_value() == '129'
+        await fit_phases.select_option(str(FIT_PHASES))
+        assert await page.locator('input[name=fit]').count() == 8
+        await page.locator('input[name=fit][value=inclination]').uncheck()
         await page.locator('input[name=fit][value=temperature_ratio]').uncheck()
         await page.locator('#fit-form button[type=submit]').click()
-        await page.wait_for_function("window.engineResults.some(m=>m.operation==='fit')", timeout=180000)
+        assert 'at least one' in await page.locator('#fit-error').inner_text()
+        await page.locator('input[name=fit][value=inclination]').check()
+        await page.locator('#fit-form button[type=submit]').click()
+        await page.wait_for_function("window.engineResults.some(m=>m.operation==='fit')", timeout=300000)
         fitted = await page.evaluate("window.engineResults.find(m=>m.operation==='fit').result")
         assert fitted['fit']['parameters'] == ['inclination']
         assert fitted['comparison']['rms'] <= changed['comparison']['rms'] + 1e-10
-        assert fitted['fit']['objective_phases'] == 81 and len(fitted['phases']) == 513
+        assert fitted['fit']['objective_phases'] == FIT_PHASES and len(fitted['phases']) == 513
         await verify_single(fitted, 1)
         async with page.expect_download() as fitted_download:
             await page.locator('#export-button').click()

@@ -38,3 +38,5 @@
 .slider-zoom select,#surface-workers {font:inherit;padding:.2rem;border:1px solid #d7d4df;border-radius:4px;background:white;color:var(--ink)}
 
 .slider-zoom[hidden], #range-epoch[hidden] {display:none}
+
+@media(min-width:600px){.fit-options{grid-template-columns:repeat(2,minmax(0,1fr))}}

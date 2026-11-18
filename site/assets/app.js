@@ -302,6 +302,7 @@ function startEngine() {
       }
       state.parameters={...data.parameters};
       current.revision=++state.revision;
+      Object.keys(zoomOptions).forEach(centerSlider);
       updateControlValues();clearDisplay();
       if(previousExact)labelCurve('Previous PHOEBE curve · drawing fitted parameters');
       drawPlots();updateStats();
@@ -355,7 +356,7 @@ function startEngine() {
         if(data.result.surface_workers>1)text+= ' · '+data.result.surface_workers+' workers';
         if(data.result.source==='reused_geometry')text='Exact PHOEBE · 513 phases · updated observation comparison';
         if(data.result.source==='stored_exact')text='Exact PHOEBE · 513 phases · saved reference for these settings';
-        if(data.result.fit) {text=`Local fit complete · ${data.result.phases.length} phases · ${data.result.fit.evaluations} model evaluations · ${data.result.seconds.toFixed(1)} s`;toast(data.result.fit.converged?'Local fit completed. Inspect the residuals before accepting the model.':'The short fit reached its stopping limit. Inspect the residuals and starting values.');}
+        if(data.result.fit) {text=`Local fit complete · ${data.result.fit.objective_phases}-phase search · ${data.result.phases.length}-point curve · ${data.result.fit.evaluations} model evaluations · ${data.result.seconds.toFixed(1)} s`;toast(data.result.fit.converged?'Local fit completed. Inspect the residuals before accepting the model.':'The short fit reached its stopping limit. Inspect the residuals and starting values.');}
         status(text);drawPlots();updateStats();
       }
       if(state.queued) {state.queued=false;requestModel('compute');}
@@ -406,7 +407,7 @@ function requestModel(type='compute',fit=[]) {
       status('Exact surface physics · '+stage+' · '+seconds+' s','busy');
     },1000);
   }
-  state.worker.postMessage({type,id,progressive:true,payload:{parameters:{...state.parameters},dataset:state.dataset,quality:state.quality,workers:Number($('surface-workers').value),fit}});
+  state.worker.postMessage({type,id,progressive:true,payload:{parameters:{...state.parameters},dataset:state.dataset,quality:state.quality,workers:Number($('surface-workers').value),fit_phases:Number($('fit-phases').value),fit}});
 }
 
 function normalizedData() {
@@ -648,7 +649,7 @@ function bindEvents() {
     }catch(error){$('import-error').textContent=cleanError(error);}
   };
   $('fit-button').onclick=()=>{$('fit-error').textContent='';$('fit-dialog').showModal();};
-  $('fit-form').onsubmit=(e)=>{e.preventDefault();const keys=[...document.querySelectorAll('input[name=fit]:checked')].map(x=>x.value);if(keys.length<1||keys.length>2){$('fit-error').textContent='Select one or two parameters.';return;}if(state.busy){$('fit-error').textContent='Wait for the current model to finish.';return;}$('fit-dialog').close();requestModel('fit',keys);};
+  $('fit-form').onsubmit=(e)=>{e.preventDefault();const keys=[...document.querySelectorAll('input[name=fit]:checked')].map(x=>x.value);if(!keys.length){$('fit-error').textContent='Select at least one parameter.';return;}if(keys.includes('omega') && state.parameters.eccentricity===0 && !keys.includes('eccentricity')){$('fit-error').textContent='Also select eccentricity to fit periastron angle from a circular orbit.';return;}if(state.busy){$('fit-error').textContent='Wait for the current model to finish.';return;}$('fit-dialog').close();requestModel('fit',keys);};
   $('light-curve').addEventListener('pointermove',(e)=>{
     const canvas=$('light-curve'),c=canvas.chart;if(!c||!c.data.phase.length)return;
     const rect=canvas.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top;

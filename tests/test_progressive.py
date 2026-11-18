@@ -41,8 +41,8 @@ class ProgressiveTests(unittest.TestCase):
         from unittest.mock import patch
         best = dict(model.DEFAULTS, inclination=83.8)
         data = dict(x=np.linspace(-.4,.4,25), y=np.linspace(.85,1,25), sigma=[.01]*25)
-        info = dict(parameters=['inclination'], objective_phases=81)
-        with patch.object(model, '_fit_parameters', return_value=(best, info)):
+        info = dict(parameters=['inclination'], objective_phases=513)
+        with patch.object(model, '_fit_parameters', return_value=(best, info, None)):
             steps = list(model.progressive_fit(dict(parameters=model.DEFAULTS, dataset=data, quality='refined')))
         self.assertEqual(steps[0], dict(type='fit_parameters', parameters=best))
         final = steps[-1]['result']
@@ -82,7 +82,7 @@ class ProgressiveTests(unittest.TestCase):
                 self.assertEqual(parallel['model'], serial['model'])
                 self.assertEqual(parallel['comparison'], serial['comparison'])
             info = dict(parameters=['inclination'])
-            with patch.object(model, '_fit_parameters', return_value=(p, info)):
+            with patch.object(model, '_fit_parameters', return_value=(p, info, None)):
                 fitted, widths = finish(model.progressive_fit(dict(payload, workers=4)))
                 self.assertEqual(max(widths), 4)
                 self.assertEqual(fitted['fit'], info)

@@ -32,8 +32,12 @@ With spherical stars and heating off, the sharp PHOEBE line appears at 65 unifor
 Three midpoint passes yield nested 129-, 257- and 513-point grids. PHOEBE sends
 updates in batches of 64 new points. Preview uses 400 triangles per star and
 Refined uses 1,500. Only the final grid supplies the displayed statistics and CSV.
-Local Fit searches on 81 phases with 400 triangles per star. It then recomputes
-the fitted parameters on the same 513 phases and selected mesh as the sliders.
+Local Fit can vary any subset of the eight physical sliders, holding the epoch fixed.
+The search defaults to 129 model phases. Choose 65 for a quick fit or 513 to
+resolve narrow eclipse structure. Every trial uses the selected mesh and all
+observations. PHOEBE fills the missing phases of the winning trial for the
+513-point plot. Period fits refold timestamped data and preserve exposure identity
+and uncertainty weights throughout the search.
 RMS, reduced chi-square and the exported CSV use this final curve. Reduced
 chi-square accounts for the selected fit parameters and flux normalization.
 At the opening settings, Preview has exact saved 513-point PHOEBE curves for
@@ -42,8 +46,7 @@ phase points. Under **Surface physics → Surface workers**, choose 1–8 browse
 workers. The first five points come from the primary worker. Additional workers
 calculate disjoint phase batches with identical PHOEBE settings. The primary
 worker combines absolute fluxes before normalization. Helpers are released at
-completion or cancellation. The default is one worker. Only the final curve of
-a surface-mode Local Fit uses the selected count. Its optimization is serial.
+completion or cancellation. The default is one worker. Local Fit evaluates its trials serially and reuses the winning trial for the final plot.
 The synthetic example is explicitly labeled and was generated with PHOEBE.
 It is observational input, not a library of precomputed models.
 
