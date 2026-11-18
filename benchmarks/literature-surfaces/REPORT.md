@@ -2,6 +2,8 @@
 
 PHOEBE 2.5.4 returned **3,103 finite exact curves in 4,457 new design attempts**. The selected wider spherical fit trained on 1,453 new geometries. The circular inclination–radius slice recovered tides plus heating on 54 held-out systems with RMS **0.000423**, compared with **0.005599** for the spherical disc prediction. All flux errors below use median-normalized Johnson V flux before scaling to observations.
 
+[GitHub review and compact artifacts](https://github.com/paulnord/phoebe-lab-preview/pull/1)
+
 ## What the catalog supports
 
 The 2017-10-10 CDS edition of DEBCat contains 195 detached eclipsing systems. For each system we exponentiated the catalog base-10 masses, radii and temperatures, and computed a³ = G(M₁ + M₂)P²/(4π²). Each fractional radius is the component radius divided by this semimajor axis. Ratios preserve the catalog component labels. Quantiles are unweighted system quantiles over finite entries, with missing values excluded. [Southworth, DEBCat](https://arxiv.org/abs/1411.1219) · [CDS table and field definitions](https://cdsarc.cds.unistra.fr/viz-bin/ReadMe/V/152?format=html)

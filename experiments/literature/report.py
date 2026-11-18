@@ -47,6 +47,8 @@ def main():
         f"PHOEBE 2.5.4 returned **{inv['totals']['ok']:,} finite exact curves in {inv['attempted']:,} new design attempts**. The selected wider spherical fit trained on {sel['train']['ok']:,} new geometries. The circular inclination–radius slice recovered tides plus heating on {circular['both']['candidate']['n']} held-out systems with RMS **{num(circular['both']['candidate']['rms'])}**, compared with **{num(circular['both']['spherical']['rms'])}** for the spherical disc prediction. All flux errors below use median-normalized Johnson V flux before scaling to observations."
     )
     line()
+    line("[GitHub review and compact artifacts](https://github.com/paulnord/phoebe-lab-preview/pull/1)")
+    line()
     line("## What the catalog supports")
     line()
     line(
