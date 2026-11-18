@@ -1,0 +1,11 @@
+.build/
+.qa/
+__pycache__/
+*.pyc
+.DS_Store
+site/runtime/
+site/source/
+site/engine/*.whl
+site/LICENSE.txt
+site/NOTICE.txt
+

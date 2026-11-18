@@ -1,0 +1,53 @@
+name: Build, verify and publish PHOEBE Lab
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Build PHOEBE for the browser and assemble static assets
+        run: python tools/build_engine.py
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install numpy playwright
+          python -m playwright install --with-deps chromium
+      - name: Test the actual browser engine and interface
+        run: |
+          python -m http.server 8765 --bind 127.0.0.1 --directory site > /tmp/phoebe-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          python tests/browser_smoke.py http://127.0.0.1:8765/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

@@ -1,0 +1,28 @@
+PHOEBE Lab
+Copyright (C) 2026 Paul Nord
+This original educational interface and its model wrapper are licensed under
+GPL-3.0-or-later. See LICENSE.
+
+This app runs PHOEBE 2.5.4, copyright its respective contributors, under
+GPL-3.0-or-later: https://github.com/phoebe-project/phoebe2
+Pinned upstream commit: cbbd79cee12296b1fe7eeb0662898450a9567cfd
+This is an independent demonstration, not an official PHOEBE release.
+
+The browser build adjusts the build-only NumPy constraint, makes terminal
+readline completion optional, replaces shell-based server-configuration listing
+with Python filesystem access, and omits the unused large trained KNN datasets.
+PHOEBE's numerical C++ and Python scientific algorithms are unchanged.
+tools/package_browser_wheel.py records the exact runtime-source adjustments.
+Corresponding upstream sources and build scripts are supplied under site/source/
+in each deployed site. The interface source is in the linked GitHub repository.
+
+ndpolator 1.3.1 is copyright its contributors, GPL-3.0-or-later:
+https://github.com/aprsa/ndpolator
+Its source archive is also supplied under site/source/.
+
+Pyodide 314.0.8 provides Python and WebAssembly scientific dependencies:
+https://github.com/pyodide/pyodide (MPL-2.0 and bundled component licenses).
+NumPy, SciPy, Astropy, ERFA, PyYAML, requests, tqdm, micropip and their
+dependencies retain their individual licenses, included in the distributed
+package wheels under site/runtime/. CPython retains its PSF license.
+No code or visual assets have been copied from phoebe-lab-ui.
