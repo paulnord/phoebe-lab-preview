@@ -42,11 +42,11 @@ await micropip.install(json.loads(_browser_wheels), deps=False)
 `);
   status("Preparing the binary-star model", "PHOEBE's numerical engine is running locally in WebAssembly.");
   const modelURL = new URL("../engine/model.py", self.location.href);
-  const sourceResponse = await fetch(modelURL);
+  const sourceResponse = await fetch(modelURL, {cache: 'no-cache'});
   if (!sourceResponse.ok) throw new Error("The model calculation module could not be loaded.");
   pyodide.FS.writeFile("/home/pyodide/model.py", await sourceResponse.text());
   if(!nativeFiles){
-    const refs=await fetch(new URL('../engine/surface-references.json',self.location.href));
+    const refs=await fetch(new URL('../engine/surface-references.json',self.location.href), {cache: 'no-cache'});
     if(refs.ok)pyodide.FS.writeFile('/home/pyodide/surface-references.json',await refs.text());
   }
   await pyodide.runPythonAsync("import model; import phoebe; _engine_version = phoebe.__version__");

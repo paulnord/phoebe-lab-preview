@@ -1,9 +1,10 @@
-import {bindNativeFiles} from './native-files.js?v=85b3bd9982cf5b25';
+import {bindVelocityPlot} from './radial-velocity.mjs?v=5c40d22026196c51';
+import {bindNativeFiles} from './native-files.js?v=b81d3b4d01d31c3f';
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = {inclination:84.5,radius_primary:.21,radius_secondary:.17,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [
   {name:'Orbit',items:[
-    ['inclination','Inclination',65,90,.1,1,'°','90° is edge-on. Lower angles reduce eclipses.'],
+    ['inclination','Inclination',0,90,.1,1,'°','0° is face-on. At 90° the orbit is edge-on.'],
     ['eccentricity','Eccentricity',0,.35,.001,4,'','Zero is a circular orbit.'],
     ['omega','Periastron angle',0,360,1,0,'°','The orientation of an eccentric orbit.'],
   ]},
@@ -25,11 +26,12 @@ let predictDisplay = null, dragView = null, pointerHeld = false;
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
 const exactHistory = new Map();
-const geometryKey=()=>JSON.stringify([state.quality,...Object.keys(DEFAULTS).map(k=>state.parameters[k])]);
+const plotPhases=()=>state.parameters.distortion ? Number($('tidal-phases').value) : 513;
+const geometryKey=()=>JSON.stringify([state.quality,plotPhases(),...Object.keys(DEFAULTS).map(k=>state.parameters[k])]);
 
 function rememberExact(result) {
   previousExact=result;
-  if(result.fit || result.phases.length!==513)return;
+  if(result.fit || result.phases.length!==plotPhases())return;
   const key=geometryKey();
   exactHistory.delete(key);
   exactHistory.set(key,result);
@@ -45,7 +47,7 @@ function restoreExact() {
   state.result={...saved,revision:state.revision};previousExact=state.result;
   setBusy(false);$('export-button').disabled=false;
   $('plot-placeholder').hidden=true;
-  status('Exact PHOEBE · 513 phases · restored');drawPlots();updateStats();
+  status(`Exact PHOEBE · ${saved.phases.length} phases · restored`);drawPlots();updateStats();
   return true;
 }
 const legend = document.querySelector('.chart-legend span:last-child');
@@ -94,7 +96,7 @@ function compareDisplayCurve(curve, obs) {
 }
 
 function timingDisplay() {
-  const sameGeometry=(curve,ignorePeriod)=>curve?.parameters && curve.quality===state.quality &&
+  const sameGeometry=(curve,ignorePeriod)=>curve?.parameters && curve.quality===state.quality && curve.phases.length>=plotPhases() &&
     Object.keys(DEFAULTS).every(k=>k==='epoch'||(ignorePeriod && k==='period')||curve.parameters[k]===state.parameters[k]);
   const candidates=[state.result,previousExact,...Array.from(exactHistory.values()).reverse()];
   const exact=candidates.find(c=>sameGeometry(c,false));
@@ -181,8 +183,12 @@ function renderControls() {
         const inTicks=zoom && source===range && $(key+'-span').value!=='full';
         const entered=source.valueAsNumber;
         const value=inTicks ? Number((zoomCenters[key]+entered/10**zoom.digits).toFixed(zoom.digits)) : entered;
-        if(!Number.isFinite(value)||value<min||value>max) {number.setCustomValidity(`Choose a value from ${min} to ${max}.`);return;}
-        number.setCustomValidity('');state.parameters[key]=value;
+        if(!Number.isFinite(value)||value<min||value>max) {
+          updateControlValues();
+          toast(`${label} must be between ${min} and ${max}. Using ${number.value}${unit}.`);
+          return;
+        }
+        state.parameters[key]=value;
         if(zoom && source===number)centerSlider(key);
         updateControlValues();parametersChanged(source===range,false,key);
       };
@@ -266,6 +272,7 @@ function setBusy(busy,fitting=false) {
   $('fit-button').disabled=!state.ready||busy||state.result?.revision!==state.revision;
   $('stop-button').hidden=!busy;
   document.querySelectorAll('.quality').forEach(button=>{button.disabled=fitting;});
+  $('tidal-phases').disabled=fitting;
   $('surface-workers').disabled=fitting;Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
   $('example-choice').disabled=fitting;
   $('import-button').disabled=fitting;$('example-button').disabled=fitting;$('reset-button').disabled=fitting;
@@ -281,7 +288,7 @@ function startEngine() {
   $('engine-banner').hidden=false;$('engine-retry').hidden=true;
   $('engine-pill').innerHTML='<span class="status-dot loading"></span>Loading engine';
   status('Starting the browser engine…','busy');
-  state.worker=new Worker(new URL('./engine.worker.js?v=e43073184c605efc',import.meta.url),{type:'module'});
+  state.worker=new Worker(new URL('./engine.worker.js?v=fb346b55717006fd',import.meta.url),{type:'module'});
   const worker=state.worker;
   state.worker.onmessage=({data})=>{
     if(worker!==state.worker)return;
@@ -335,7 +342,7 @@ function startEngine() {
         }
         $('plot-placeholder').hidden=true;
         labelCurve(`PHOEBE model · ${data.phases.length} points`);
-        status(`Exact PHOEBE · ${data.phases.length} of 513 phase points`,'busy');
+        status(`Exact PHOEBE · ${data.phases.length} of ${current.plotCount} phase points`,'busy');
         drawPlots();updateStats();
       }
       setTimeout(advance,35);
@@ -354,8 +361,8 @@ function startEngine() {
         $('plot-placeholder').hidden=true;$('export-button').disabled=false;$('fit-button').disabled=false;
         let text=`${data.result.quality==='refined'?'Refined':'Preview'} model · ${data.result.phases.length} phases · ${data.result.seconds.toFixed(1)} s`;
         if(data.result.surface_workers>1)text+= ' · '+data.result.surface_workers+' workers';
-        if(data.result.source==='reused_geometry')text='Exact PHOEBE · 513 phases · updated observation comparison';
-        if(data.result.source==='stored_exact')text='Exact PHOEBE · 513 phases · saved reference for these settings';
+        if(data.result.source==='reused_geometry')text=`Exact PHOEBE · ${data.result.phases.length} phases · updated observation comparison`;
+        if(data.result.source==='stored_exact')text=`Exact PHOEBE · ${data.result.phases.length} phases · saved reference for these settings`;
         if(data.result.fit) {text=`Local fit complete · ${data.result.fit.objective_phases}-phase search · ${data.result.phases.length}-point curve · ${data.result.fit.evaluations} model evaluations · ${data.result.seconds.toFixed(1)} s`;toast(data.result.fit.converged?'Local fit completed. Inspect the residuals before accepting the model.':'The short fit reached its stopping limit. Inspect the residuals and starting values.');}
         status(text);drawPlots();updateStats();
       }
@@ -395,7 +402,8 @@ function requestModel(type='compute',fit=[]) {
   if(type==='fit' && previousExact)labelCurve('Previous PHOEBE curve · fitting');
   $('export-button').disabled=true;updateStats();drawPlots();
   const id=++state.request;
-  state.current={id,revision:state.revision,type,tides:state.parameters.distortion,heating:state.parameters.irradiation};state.queued=false;setBusy(true,type==='fit');
+  const plotCount=type==='fit' ? 513 : plotPhases();
+  state.current={id,revision:state.revision,type,plotCount,tides:state.parameters.distortion,heating:state.parameters.irradiation};state.queued=false;setBusy(true,type==='fit');
   status(type==='fit'?'Fitting selected parameters in this browser…':`Computing ${state.quality} model in this browser…`,'busy');
   clearInterval(elapsedTimer);
   if(type==='compute' && (state.current.tides || state.current.heating)){
@@ -403,11 +411,11 @@ function requestModel(type='compute',fit=[]) {
     elapsedTimer=setInterval(()=>{
       if(state.current?.id!==id || state.revision!==revision){clearInterval(elapsedTimer);return;}
       const seconds=Math.floor((performance.now()-started)/1000);
-      const stage=exactPartial ? exactPartial.phases.length+' of 513 phases' : 'calculating first 5 phases';
+      const stage=exactPartial ? `${exactPartial.phases.length} of ${plotCount} phases` : 'calculating first 5 phases';
       status('Exact surface physics · '+stage+' · '+seconds+' s','busy');
     },1000);
   }
-  state.worker.postMessage({type,id,progressive:true,payload:{parameters:{...state.parameters},dataset:state.dataset,quality:state.quality,workers:Number($('surface-workers').value),fit_phases:Number($('fit-phases').value),fit}});
+  state.worker.postMessage({type,id,progressive:true,payload:{parameters:{...state.parameters},dataset:state.dataset,quality:state.quality,plot_phases:plotCount,workers:Number($('surface-workers').value),fit_phases:Number($('fit-phases').value),fit}});
 }
 
 function normalizedData() {
@@ -450,7 +458,8 @@ function drawTimeSeries() {
   data.x.forEach((t,i)=>ctx.fillRect(px(t)-.9,py(data.y[i])-.9,1.8,1.8));
 }
 
-function drawPlots() {drawTimeSeries();drawChart($('light-curve'),false);drawChart($('residual-curve'),true);}
+const drawVelocityPlot=bindVelocityPlot($('rv-panel'));
+function drawPlots() {drawVelocityPlot(state.parameters,state.dataset);drawTimeSeries();drawChart($('light-curve'),false);drawChart($('residual-curve'),true);}
 function drawChart(canvas,residual) {
   const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;
   const dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;
@@ -590,9 +599,11 @@ async function loadExample(notify=true) {
   }catch(e){if(id===exampleRequest)toast(cleanError(e));}
 }
 function bindEvents() {
+  $('rv-rescale').onclick=()=>drawVelocityPlot(state.parameters,state.dataset,true);
   for(const el of document.querySelectorAll('.close-dialog'))el.addEventListener('click',()=>el.closest('dialog').close());
   for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',(e)=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
   $('guide-button').onclick=()=>$('guide-dialog').showModal();
+  $('tidal-phases').onchange=()=>{if(state.parameters.distortion)parametersChanged();};
   $('surface-workers').onchange=()=>{
     if(state.current?.type==='compute' && (state.current.tides || state.current.heating))startEngine();
   };
@@ -600,7 +611,7 @@ function bindEvents() {
   $('reset-button').onclick=()=>{state.parameters={...DEFAULTS};Object.keys(zoomOptions).forEach(centerSlider);updateControlValues();parametersChanged();};
   $('example-button').onclick=()=>loadExample();
   for(const button of document.querySelectorAll('.quality'))button.onclick=()=>{state.quality=button.dataset.quality;document.querySelectorAll('.quality').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});parametersChanged();scheduleCompute(50);};
-  $('save-button').onclick=()=>{if(!state.dataset){toast('Load observations first.');return;}download('phoebe-lab-session.json',JSON.stringify({schema:'phoebe-lab-session-v1',parameters:state.parameters,dataset:state.dataset,quality:state.quality},null,2));};
+  $('save-button').onclick=()=>{if(!state.dataset){toast('Load observations first.');return;}download('phoebe-lab-session.json',JSON.stringify({schema:'phoebe-lab-session-v1',parameters:state.parameters,dataset:state.dataset,quality:state.quality,tidal_phases:Number($('tidal-phases').value)},null,2));};
   $('export-button').onclick=()=>{if(state.result?.revision!==state.revision)return;download('phoebe-model.csv','phase,normalized_flux\n'+state.result.phases.map((x,i)=>`${x},${state.result.model[i]}`).join('\n')+'\n','text/csv');};
   $('stop-button').onclick=()=>{if(state.current?.type==='compute') {
     if(state.current.tides||state.current.heating){
@@ -630,6 +641,7 @@ function bindEvents() {
         if(project.schema!=='phoebe-lab-session-v1')throw Error('This is not a PHOEBE Lab session file.');
         for(const [key,spec] of parameterInputs){const value=Number(project.parameters?.[key]);if(!Number.isFinite(value)||value<spec.min||value>spec.max)throw Error(`The saved ${key} value is outside this app’s supported range.`);}
         for(const key of ['distortion','irradiation'])if(typeof project.parameters?.[key]!=='boolean')throw Error(`The saved ${key} setting is invalid.`);
+        $('tidal-phases').value=project.tidal_phases===129?'129':'513'; // Older sessions used 513.
         state.quality=project.quality==='refined'?'refined':'preview';
         document.querySelectorAll('.quality').forEach(b=>{const active=b.dataset.quality===state.quality;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
         installDataset(project.dataset,project.parameters);$('import-dialog').close();toast('Restored the saved session.');return;

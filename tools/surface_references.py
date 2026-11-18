@@ -1,4 +1,4 @@
-"""Compute the three surface-physics references for the unchanged lab starting binary."""
+"""Compute exact surface-physics references for the default and non-eclipsing binaries."""
 import inspect
 import hashlib
 import json
@@ -15,12 +15,14 @@ import model
 def generate():
     phases=np.linspace(-.5,.5,513)
     references=[]
-    for tides,heating in ((True,False),(False,True),(True,True)):
-        p=dict(model.DEFAULTS,distortion=tides,irradiation=heating)
+    cases=[dict(model.DEFAULTS,distortion=tides,irradiation=heating)
+           for tides,heating in ((True,False),(False,True),(True,True))]
+    cases.append(json.loads((root/'site/examples/non-eclipsing.json').read_text())['truth'])
+    for p in cases:
         _,flux=model._raw_model(p,'preview',phases=phases,ntriangles=400)
         assert len(flux)==513 and np.isfinite(flux).all() and np.min(flux)>0
         references.append(dict(parameters=p,flux=flux.tolist()))
-        print(f'Calculated tides={tides}, heating={heating}',flush=True)
+        print(f"Calculated inclination={p['inclination']}, tides={p['distortion']}, heating={p['irradiation']}",flush=True)
     passband=Path(model.phoebe.list_installed_passbands(full_dict=True)['Johnson:V']['fname'])
     data=dict(physics_sha256=hashlib.sha256(inspect.getsource(model._physical_flux).encode()).hexdigest(),
               version=model.phoebe.__version__,triangles=400,passband='Johnson:V',

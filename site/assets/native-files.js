@@ -21,7 +21,7 @@ export function bindNativeFiles(labSnapshot) {
   }
   function engine() {
     if(loading)return loading;
-    const w=new Worker(new URL('./engine.worker.js?v=e43073184c605efc',import.meta.url),{type:'module'});
+    const w=new Worker(new URL('./engine.worker.js?v=fb346b55717006fd',import.meta.url),{type:'module'});
     worker=w;
     loading=new Promise((resolve,reject)=>{
       function failed(message) {

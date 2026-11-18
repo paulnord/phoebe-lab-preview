@@ -88,6 +88,40 @@ class ProgressiveTests(unittest.TestCase):
                 self.assertEqual(fitted['fit'], info)
                 self.assertEqual(fitted['model'], serial['model'])
 
+    def test_tidal_plot_refines_only_missing_phases(self):
+        from unittest.mock import patch
+        p = dict(model.DEFAULTS, distortion=True, inclination=83.7)
+        data = dict(x=np.linspace(-.42,.42,20), y=np.ones(20))
+        requested = []
+        def sample(values, quality, indices):
+            requested.extend(indices)
+            return 17 + np.cos(np.asarray(indices) * np.pi / 256)
+        def run(count):
+            curve = model.progressive_curve(dict(parameters=p, dataset=data, workers=4, plot_phases=count))
+            message = next(curve)
+            while message['type'] != 'result':
+                response = None
+                if message['type'] == 'work':
+                    response = [sample(None, None, indices) for indices in message['groups']]
+                message = curve.send(response)
+            return message['result']
+        with patch.object(model, '_last_complete', None), patch.object(model, '_phase_flux', side_effect=sample):
+            coarse = run(129)
+            self.assertEqual(sorted(requested), list(range(0,513,4)))
+            self.assertEqual(len(coarse['model']), 129)
+            requested.clear()
+            full = run(513)
+            self.assertEqual(sorted(requested), [i for i in range(513) if i % 4])
+            grid = np.linspace(-.5,.5,513)
+            flux = 17 + np.cos(np.arange(513) * np.pi / 256)
+            comparison = model._comparison(grid, flux / np.median(flux), data, p)
+            np.testing.assert_allclose(full['model'], flux / np.median(flux) * comparison['normalization'])
+            requested.clear()
+            restored = run(129)
+            self.assertEqual(restored['model'], coarse['model'])
+            self.assertEqual(restored['comparison'], coarse['comparison'])
+            self.assertEqual(requested, [])
+
     def test_epoch_reuses_only_complete_geometry_and_recomputes_statistics(self):
         from unittest.mock import patch
         p = dict(model.DEFAULTS, inclination=84, epoch=2450000.)

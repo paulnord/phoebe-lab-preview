@@ -63,11 +63,11 @@ class FitTests(unittest.TestCase):
             with self.subTest(count=count), patch.object(model, '_physical_flux', side_effect=physical) as compute:
                 model._phase_flux.cache_clear()
                 self.addCleanup(model._phase_flux.cache_clear)
-                # Provide the complete initial model in median-normalized units, like the app.
+                # Provide the complete initial model in absolute flux units, like the app.
                 initial_flux = physical(initial, 'preview', phases=grid)[1]
                 values = tuple(sorted((k,v) for k,v in initial.items() if k != 'epoch'))
-                model._last_complete = (('preview',values), grid, initial_flux/np.median(initial_flux))
-                payload = dict(parameters=initial,dataset=data,fit=['inclination'])
+                model._last_complete = (('preview',values), grid, initial_flux)
+                payload = dict(parameters=initial,dataset=data,fit=['inclination'],plot_phases=129)
                 if count == 65:
                     payload['fit_phases'] = count  # Missing setting defaults to 129.
                 stream = model.progressive_fit(payload)
