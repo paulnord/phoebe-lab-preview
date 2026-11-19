@@ -54,7 +54,7 @@ await micropip.install(json.loads(_browser_wheels), deps=False)
     const advancedSource=await fetch(new URL('../engine/advanced.py',self.location.href));
     if(!advancedSource.ok)throw Error('The advanced parameter module is missing.');
     pyodide.FS.writeFile('/home/pyodide/advanced.py',await advancedSource.text());
-    const nativeSource=await fetch(new URL('../engine/native_files.py',self.location.href));
+    const nativeSource=await fetch(new URL('../engine/native_files.py?v=d168fa074889b281',self.location.href));
     if (!nativeSource.ok) throw Error('The native PHOEBE file module is missing.');
     pyodide.FS.writeFile('/home/pyodide/native_files.py',await nativeSource.text());
     await pyodide.runPythonAsync('import native_files');
