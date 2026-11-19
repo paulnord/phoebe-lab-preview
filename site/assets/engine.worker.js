@@ -42,11 +42,11 @@ await micropip.install(json.loads(_browser_wheels), deps=False)
 `);
   status("Preparing the binary-star model", "PHOEBE's numerical engine is running locally in WebAssembly.");
   const modelURL = new URL("../engine/model.py", self.location.href);
-  const sourceResponse = await fetch(modelURL);
+  const sourceResponse = await fetch(modelURL, {cache: 'no-cache'});
   if (!sourceResponse.ok) throw new Error("The model calculation module could not be loaded.");
   pyodide.FS.writeFile("/home/pyodide/model.py", await sourceResponse.text());
   if(!nativeFiles){
-    const refs=await fetch(new URL('../engine/surface-references.json',self.location.href));
+    const refs=await fetch(new URL('../engine/surface-references.json',self.location.href), {cache: 'no-cache'});
     if(refs.ok)pyodide.FS.writeFile('/home/pyodide/surface-references.json',await refs.text());
   }
   await pyodide.runPythonAsync("import model; import phoebe; _engine_version = phoebe.__version__");
@@ -54,7 +54,7 @@ await micropip.install(json.loads(_browser_wheels), deps=False)
     const advancedSource=await fetch(new URL('../engine/advanced.py',self.location.href));
     if(!advancedSource.ok)throw Error('The advanced parameter module is missing.');
     pyodide.FS.writeFile('/home/pyodide/advanced.py',await advancedSource.text());
-    const nativeSource=await fetch(new URL('../engine/native_files.py',self.location.href));
+    const nativeSource=await fetch(new URL('../engine/native_files.py?v=d168fa074889b281',self.location.href));
     if (!nativeSource.ok) throw Error('The native PHOEBE file module is missing.');
     pyodide.FS.writeFile('/home/pyodide/native_files.py',await nativeSource.text());
     await pyodide.runPythonAsync('import native_files');

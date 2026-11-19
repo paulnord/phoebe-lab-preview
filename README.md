@@ -40,6 +40,10 @@ observations. PHOEBE fills the missing phases of the winning trial for the
 and uncertainty weights throughout the search.
 RMS, reduced chi-square and the exported CSV use this final curve. Reduced
 chi-square accounts for the selected fit parameters and flux normalization.
+Tidal plots stop at 129 phases by default. Under **Surface physics → Tidal plot phases**,
+select **513** for a closer look at narrow eclipses. For the same geometry and mesh,
+PHOEBE fills the missing phases of a completed 129-point calculation. The residuals
+and CSV use the completed plot grid. Heating alone uses 513 phases.
 At the opening settings, Preview has exact saved 513-point PHOEBE curves for
 tides, heating and both together. Other surface models start with five actual
 phase points. Under **Surface physics → Surface workers**, choose 1–8 browser
@@ -57,19 +61,54 @@ non-irradiated combinations inside the UI ranges. It solves the eccentric orbit
 with limb-darkened discs and applies the trained eight-slider Fourier correction. Mass ratio and period affect surface gravity. The legend
 says when gravity is clamped at the atmosphere table edge. Exact PHOEBE can reject
 some settings, in which case CSV export, fit and residual statistics stay unavailable.
-With tides or irradiation selected, an amber spherical estimate follows the sliders
-and identifies the omitted effects until the first exact surface calculation returns.
 Turning an effect off restores a matching completed exact result immediately if
 available. Eight results are retained for the current observation dataset.
+
+On two measured parameter slices, the amber drag curve includes Roche tides,
+Horvat irradiation, or both. Load **Non-eclipsing binary (30°)** and drag
+inclination between 18° and 46° to try it. The legend identifies the effects
+included. Where only a spherical preview is available, its label lists the omitted effects.
+On release the exact worker computes the curve for comparison and export.
+[Study results and supported settings](benchmarks/literature-surfaces/REPORT.md)
+
+## Radial velocities
+
+The main lab plots both stars’ predicted line-of-sight orbital velocities in
+km/s on the light curve’s phase grid. Solid purple is the primary and dashed
+teal is the secondary. K₁ and K₂ give their velocity semi-amplitudes. The
+Keplerian calculation uses the same primary mass (1.2 solar masses), mass
+ratio, period, inclination, eccentricity and periastron angle as the lab.
+It updates during a drag even while the photometric worker is busy.
+
+The reference velocity is the binary center of mass. These curves describe
+orbital motion alone; spectroscopic surface effects such as the
+Rossiter–McLaughlin anomaly require a flux-weighted RV calculation. Use the
+advanced PHOEBE workspace for native RV datasets. The main fitter and its
+residual panel use the light-curve observations.
+
+Inclination runs from 0° to 90°. At 0°, both velocities are zero at every
+phase. Below the photometric surrogate’s training range, releasing the slider
+computes the light curve with PHOEBE.
+
+For the eccentric example, swipe the period slider to see the velocity
+amplitudes change. The axis expands to fit larger velocities and keeps that
+scale for comparison as the velocities decrease. **Rescale velocity axis**
+fits the current pair of curves.
 
 ## Example curves
 
 Choose a curve in **Examples** above the chart and click **Load**. The original
-synthetic example starts at the lab defaults for fitting practice. Three additional
+synthetic example starts at the lab defaults for fitting practice. Four additional
 synthetic datasets start at the generating parameters. The grazing and deep
 primary examples use the wide-study 512-phase, 1,500-triangle reference curves.
-The eccentric example uses the eight-slider study at the same resolution. Each
-has 240 sampled phases with seeded Gaussian measurement noise.
+The eccentric example uses the eight-slider study at the same resolution.
+**Non-eclipsing binary (30°)** shows the same orbit at a lower inclination with tidal
+distortion enabled. The refined PHOEBE curve varies by 2.34% of its median flux
+from minimum to maximum, compared with 0.023% using spherical stars. Switch
+**Tidal distortion** off to compare the brightness curves. The orbital RV
+semi-amplitudes stay at 18.6 and 39.5 km/s.
+Each synthetic dataset in this group has 240 sampled phases with seeded Gaussian measurement noise.
+Regenerate the 30° example with native PHOEBE using `python tools/generate_non_eclipsing.py`.
 
 **Kepler · KIC 4544587** contains 432 measured long-cadence points with catalog
 phases, detrended fluxes and their reported uncertainties. The initial geometry

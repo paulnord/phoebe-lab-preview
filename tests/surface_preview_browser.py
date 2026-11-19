@@ -40,7 +40,17 @@ with sync_playwright() as pw:
         expect(legend).to_contain_text(label + ' omitted')
         assert page.evaluate("fuzzy.color==='#b56a08' && fuzzy.alpha<.5")
         expect(status).to_contain_text('saved reference', timeout=20000)
-        assert len(csv().splitlines()) == 514
+        expected = 129 if label == 'tides' else 513
+        expect(status).to_contain_text(f'{expected} phases')
+        assert len(csv().splitlines()) == expected + 1
+        if label == 'tides':
+            count = page.locator('#tidal-phases')
+            count.select_option('513')
+            expect(status).to_contain_text('513 phases', timeout=20000)
+            assert len(csv().splitlines()) == 514
+            count.select_option('129')
+            expect(status).to_contain_text('129 phases · restored')
+            assert len(csv().splitlines()) == 130
         assert csv() != original
         toggle.uncheck()
         expect(export).to_be_enabled(timeout=2000)

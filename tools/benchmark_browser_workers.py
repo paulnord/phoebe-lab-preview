@@ -40,6 +40,8 @@ def run(pw, url, count):
         page.goto(url)
         page.locator('#export-button:enabled').wait_for(timeout=180000)
         page.locator('#effects summary').click()
+        if page.locator('#tidal-phases').count():
+            page.locator('#tidal-phases').select_option('513')
         if count != 1 or page.locator('#surface-workers').count():
             page.locator('#surface-workers').select_option(str(count))
         # Listen to worker messages before the first custom request; the opening curve is excluded.

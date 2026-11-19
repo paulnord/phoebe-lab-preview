@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wider detached-binary comparison</title>
+<style>
+body{max-width:62rem;margin:3rem auto;padding:0 1rem;color:#252a38;font:16px/1.5 system-ui,sans-serif}h1{font-weight:600;letter-spacing:-.035em}canvas{display:block;width:100%;height:auto;border:1px solid #dadce1;margin:1rem 0}select{font:inherit;padding:.3rem} pre{white-space:pre-wrap}a{color:#454383}
+</style><h1>Wider detached-binary comparison</h1><p>Each system has a held-out PHOEBE curve and a prediction calculated in this browser. Flux is divided by its orbital sample median.</p>
+<label>Held-out system <select id="cases"></select></label><canvas id="plot" width="920" height="340" aria-label="Phase versus normalized Johnson V flux"></canvas>
+<p><b style="color:#6a59da">PHOEBE</b> · <b style="color:#ac640b">Wider spherical fit</b></p><p id="stat"></p><p id="params"></p><a href="../?example=non-eclipsing">Open the surface drag preview</a>
+<script type="module">
+import {makeWide} from './wide_predict.mjs';
+const [spec,table,rows]=await Promise.all(['model','table','cases'].map(async n=>(await fetch(n+'.json')).json()));
+const predict=makeWide(spec,table,rows), select=document.querySelector('#cases');
+for(const [i,r] of rows.entries())select.add(new Option(r.id,i));
+function show(){
+ const r=rows[+select.value],y=predict(r.id),a=r.exact,c=document.querySelector('canvas').getContext('2d');
+ const lo=Math.min(...a,...y)-.003, hi=Math.max(...a,...y)+.003, px=j=>68+816*j/255,py=v=>285-245*(v-lo)/(hi-lo);
+ c.clearRect(0,0,920,340);c.font='14px system-ui';c.fillStyle='#2b3040';
+ for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4;c.fillText(v.toFixed(3),8,py(v)+4);c.fillText((k/4-.5).toFixed(2),px(255*k/4)-15,311);c.strokeStyle='#e0e0e0';c.beginPath();c.moveTo(64,py(v));c.lineTo(889,py(v));c.stroke();}
+ c.fillText('Orbital phase',430,332);
+ for(const [v,color,width] of [[y,'#ac640b',6],[a,'#6a59da',1.6]]){
+   c.beginPath();v.forEach((f,j)=>j?c.lineTo(px(j),py(f)):c.moveTo(px(j),py(f)));c.strokeStyle=color;c.lineWidth=width;c.stroke();c.lineWidth=1;
+ }
+ const err=y.map((v,j)=>v-a[j]);
+ document.querySelector('#stat').textContent='RMS '+Math.sqrt(err.reduce((s,v)=>s+v*v,0)/256).toFixed(6)+' · Maximum '+Math.max(...err.map(Math.abs)).toFixed(6);
+ document.querySelector('#params').textContent=Object.entries(r.p).map(([k,v])=>k.replaceAll('_',' ')+' '+v.toPrecision(4)).join(' · ');
+}
+select.value=rows.findIndex(r=>Math.min(...r.exact)<.9);select.onchange=show;show();
+</script></html>

@@ -20,7 +20,7 @@ DEFAULTS = {
     "distortion": False, "irradiation": False,
 }
 LIMITS = {
-    "inclination": (65.0, 90.0), "radius_primary": (0.10, 0.32),
+    "inclination": (0.0, 90.0), "radius_primary": (0.10, 0.32),
     "radius_secondary": (0.08, 0.29), "temperature_ratio": (0.58, 1.10),
     "mass_ratio": (0.2, 1.5), "eccentricity": (0.0, 0.35),
     "omega": (0.0, 360.0), "period": (0.1, 100.0), "epoch": (-1e9, 1e9),
@@ -230,10 +230,15 @@ def progressive_curve(payload, fitted_count=0, initial_flux=None):
     quality = "refined" if payload.get("quality") == "refined" else "preview"
     values = tuple(sorted((k, v) for k, v in p.items() if k != "epoch"))
     surface = p["distortion"] or p["irradiation"]
+    plot_count = payload.get("plot_phases", 513)
+    if type(plot_count) is not int or plot_count not in (129, 513):
+        raise ValueError("Choose 129 or 513 plot phases.")
+    stride = 512 // (plot_count - 1)
     if surface and quality == "preview" and not fitted_count:
         for saved in _surface_references():
             if all(saved["parameters"][key] == value for key, value in values):
-                result = _curve_result(p, quality, np.linspace(-.5, .5, 513), np.asarray(saved["flux"]),
+                flux = np.asarray(saved["flux"])[::stride]
+                result = _curve_result(p, quality, np.linspace(-.5, .5, plot_count), flux / np.median(flux),
                                        payload["dataset"], started, fitted_count)
                 result["source"] = "stored_exact"
                 yield {"type": "result", "result": result}
@@ -241,12 +246,18 @@ def progressive_curve(payload, fitted_count=0, initial_flux=None):
     geometry_key = (quality, values)
     if _last_complete is not None and _last_complete[0] == geometry_key:
         phases, flux = _last_complete[1:]
-        result = _curve_result(p, quality, phases, flux, payload["dataset"], started, fitted_count)
-        result["source"] = "reused_geometry"
-        yield {"type": "result", "result": result}
-        return
+        if len(phases) >= plot_count:
+            step = (len(phases) - 1) // (plot_count - 1)
+            samples = flux[::step]
+            result = _curve_result(p, quality, phases[::step], samples / np.median(samples),
+                                   payload["dataset"], started, fitted_count)
+            result["source"] = "reused_geometry"
+            yield {"type": "result", "result": result}
+            return
+        if initial_flux is None or len(initial_flux) < len(flux):
+            initial_flux = flux  # Reuse the completed coarse grid in absolute flux units.
     physical = np.full(513, np.nan)
-    pending = list(_phase_batches(surface))
+    pending = [batch for batch in _phase_batches(surface) if batch[0] <= plot_count]
     if initial_flux is not None:
         count = len(initial_flux)
         indices = tuple(range(0, 513, 512 // (count - 1)))
@@ -277,8 +288,8 @@ def progressive_curve(payload, fitted_count=0, initial_flux=None):
             flux = physical[present]
             normalized = flux / np.median(flux)
             result = _curve_result(p, quality, phases, normalized, payload["dataset"], started, fitted_count)
-            if len(present) == 513:
-                _last_complete = (geometry_key, phases, normalized)
+            if len(present) == plot_count:
+                _last_complete = (geometry_key, phases, flux)
                 yield {"type": "result", "result": result}
             else:
                 yield {"type": "partial", "phases": result["phases"], "model": result["model"], "target": target}
@@ -328,8 +339,9 @@ def _fit_parameters(payload):
         if "omega" in keys:
             p["omega"] %= 360.
         geometry_key = (quality, tuple(sorted((k,v) for k,v in p.items() if k != "epoch")))
-        if _last_complete is not None and _last_complete[0] == geometry_key:
-            flux = _last_complete[2][::512 // (count - 1)]
+        if (_last_complete is not None and _last_complete[0] == geometry_key
+                and len(_last_complete[1]) >= count):
+            flux = _last_complete[2][::(len(_last_complete[1]) - 1) // (count - 1)]
             seed = None  # The complete display grid is already available.
         else:
             _, flux = _physical_flux(p, quality, phases=phases)
@@ -378,7 +390,7 @@ def progressive_fit(payload):
     started = time.perf_counter()
     best, info, seed = _fit_parameters(payload)
     yield {"type": "fit_parameters", "parameters": best}
-    curve = progressive_curve(dict(payload, parameters=best), fitted_count=len(info["parameters"]), initial_flux=seed)
+    curve = progressive_curve(dict(payload, parameters=best, plot_phases=513), fitted_count=len(info["parameters"]), initial_flux=seed)
     response = None
     while True:
         update = curve.send(response)

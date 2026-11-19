@@ -1,3 +1,4 @@
+import {paintShape} from './stellar-shapes.mjs?v=281007d035eff6f5';
 import {bindAdvanced} from './advanced.js?v=6e6a2f6ebc7d6f09';
 // Native documents have their own PHOEBE worker and never enter the fitting or preview cache.
 export function bindNativeFiles(labSnapshot) {
@@ -21,7 +22,7 @@ export function bindNativeFiles(labSnapshot) {
   }
   function engine() {
     if(loading)return loading;
-    const w=new Worker(new URL('./engine.worker.js?v=e43073184c605efc',import.meta.url),{type:'module'});
+    const w=new Worker(new URL('./engine.worker.js?v=a2151386603b44c9',import.meta.url),{type:'module'});
     worker=w;
     loading=new Promise((resolve,reject)=>{
       function failed(message) {
@@ -76,6 +77,7 @@ export function bindNativeFiles(labSnapshot) {
   function options(select,values) {
     select.replaceChildren(...values.map(v=>new Option(v,v)));
   }
+  new ResizeObserver(()=>paintShape(el('shape'),doc?.contact_shape)).observe(el('shape'));
   function orbitFields() {
     el('orbit-fields').replaceChildren();
     for(const [key,field] of Object.entries(doc?.orbits[el('orbit').value]||{})) {
@@ -123,6 +125,8 @@ export function bindNativeFiles(labSnapshot) {
     doc=meta;fileName=title;const bundle=doc.kind==='bundle';
     el('document').hidden=false;el('title').textContent=title;
     el('summary').textContent=`${bundle?'PHOEBE '+doc.version+' bundle':'PHOEBE model ParameterSet'} · ${doc.datasets.length} dataset(s) · ${doc.models.length} model(s)`;
+    el('shape-view').hidden=!doc.contact_shape;
+    if(doc.contact_shape)paintShape(el('shape'),doc.contact_shape);
     el('controls').hidden=!bundle;el('save-bundle').hidden=!bundle;el('attach').hidden=!bundle;
     el('model-row').hidden=!doc.models.length;
     options(el('compute'),doc.computes);options(el('orbit'),Object.keys(doc.orbits));orbitFields();
