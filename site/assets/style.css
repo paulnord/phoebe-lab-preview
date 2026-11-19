@@ -92,3 +92,38 @@
 #native-shape {display:block;width:100%;height:124px}
 
 #residual-curve.signed-log {height:145px}
+
+/* The stars share one orbit and stay half a revolution apart. */
+.solve-orbit {
+  position: relative;
+  flex: 0 0 44px;
+  height: 26px;
+  transform: rotate(-12deg);
+  background:
+    radial-gradient(ellipse 15px 6px at center, transparent 83%, #b9aedc 98%, transparent 113%),
+    radial-gradient(ellipse at center, #eee9fb 0%, transparent 72%);
+}
+.solve-orbit::before, .solve-orbit::after {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, #fff2bc, var(--gold) 52%, #ab703d);
+  box-shadow: 0 0 6px #e5b26db3;
+  offset-path: ellipse(15px 6px at 50% 50%);
+  offset-rotate: 0deg;
+  animation: solve-revolution 2.4s linear infinite;
+}
+.solve-orbit::after {
+  width: 7px;
+  height: 7px;
+  background: radial-gradient(circle at 32% 28%, #eeeaff, #978be8 48%, var(--purple));
+  box-shadow: 0 0 5px #9a94dfb3;
+  offset-distance: 50%;
+  animation-delay: -1.2s;
+}
+@keyframes solve-revolution {
+  from { offset-distance: 0%; }
+  to { offset-distance: 100%; }
+}
