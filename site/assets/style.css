@@ -46,12 +46,16 @@
 .rv-legend span::before {content:'';display:inline-block;width:1.2rem;margin-right:.35rem;vertical-align:middle;border-top:2px solid #5948bd}
 #rv-secondary::before {border-top:2px dashed #087c83}
 
-/* Keep the size guide in view within the parameter panel as the controls scroll. */
+/* Keep the star guide and model edit buttons together as the parameters scroll. */
 .controls-panel { --guide-height: 116px; padding-top: 0; }
-.star-guide {
+.model-toolbar {
   position: sticky;
   top: 0;
   z-index: 2;
+  background: var(--panel);
+  padding-bottom: 8px;
+}
+.star-guide {
   width: 100%;
   height: var(--guide-height);
   margin-top: 0;
@@ -59,10 +63,32 @@
   border-bottom: 1px solid var(--line);
 }
 .controls-panel :is(input, select, summary) {
-  scroll-margin-block-start: calc(var(--guide-height) + 12px);
+  scroll-margin-block-start: calc(var(--guide-height) + 5rem);
 }
 @media (max-height: 540px) {
   .controls-panel { --guide-height: 82px; }
   .star-guide { padding-bottom: 16px; }
   .star-guide .star { transform: scale(.7); }
 }
+
+#preview-agreement { margin: 0; padding: 4px 18px 8px; font-variant-numeric: tabular-nums; }
+
+#plot-settings { position: relative; z-index: 2; width: max-content; margin: 6px 18px 0 auto; font-size: 12px; }
+#plot-settings summary { cursor: pointer; color: var(--muted); }
+#plot-settings > div { position: absolute; right: 0; width: min(235px, 80vw); padding: 12px; background: #fff; border: 1px solid #dfdce7; border-radius: 8px; box-shadow: 0 4px 12px #27233818; }
+#plot-settings label { display: flex; align-items: center; gap: 7px; padding: 5px 0; cursor: pointer; }
+#plot-settings small { display: block; padding: 4px 0; line-height: 1.4; color: var(--muted); }
+#previous-curve-key i { display: inline-block; width: 17px; border-top: 2px dashed #27716e; }
+
+.rv-observations {margin: .4rem 1rem 1rem}
+.rv-observations details {margin-top:.55rem}
+.rv-observations summary {cursor:pointer}
+
+.star-guide {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto;justify-items:center;align-content:stretch;gap:2px;padding:4px 0}
+.star-guide .star-captions {position:static;gap:20px}
+#star-shape {width:100%;height:100%;min-height:0}
+#star-view,#native-shape-view figcaption {font-size:10px;color:var(--muted);text-align:center}
+#native-shape-view {margin:.5rem auto;width:min(100%,360px)}
+#native-shape {display:block;width:100%;height:124px}
+
+#residual-curve.signed-log {height:145px}

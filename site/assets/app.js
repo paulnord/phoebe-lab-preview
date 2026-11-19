@@ -1,11 +1,13 @@
-import {bindVelocityPlot} from './radial-velocity.mjs?v=5c40d22026196c51';
-import {bindNativeFiles} from './native-files.js?v=b81d3b4d01d31c3f';
+import {bindStarGuide} from './stellar-shapes.mjs?v=281007d035eff6f5';
+import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
+import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
+import {bindNativeFiles} from './native-files.js?v=306d8a3b3659f1a4';
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = {inclination:84.5,radius_primary:.21,radius_secondary:.17,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [
   {name:'Orbit',items:[
     ['inclination','Inclination',0,90,.1,1,'°','0° is face-on. At 90° the orbit is edge-on.'],
-    ['eccentricity','Eccentricity',0,.35,.001,4,'','Zero is a circular orbit.'],
+    ['eccentricity','Eccentricity',0,.35,.001,4,'','Zero is a circular orbit. Increasing eccentricity brings the stars closer together at periastron.'],
     ['omega','Periastron angle',0,360,1,0,'°','The orientation of an eccentric orbit.'],
   ]},
   {name:'The stars',items:[
@@ -22,14 +24,57 @@ const GROUPS = [
 const state = {parameters:{...DEFAULTS},quality:'preview',dataset:null,result:null,revision:0,ready:false,busy:false,fitting:false,queued:false,worker:null,request:0,current:null};
 let computeTimer,toastTimer,parsedFile,exampleRequest=0;
 const parameterInputs = new Map();
-let predictSurface = null, predictDisplay = null, dragView = null, pointerHeld = false;
+let predictEccentricSweep = null, eccentricSweepSpec = null;
+let predictNear = null, nearRocheReference = null, predictBroad = null, predictTemperature = null, predictSurface = null, predictRegional = null, predictDisplay = null, dragView = null, pointerHeld = false;
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
 const exactHistory = new Map();
+const modelHistory=[];
+let historyIndex=-1;
+
+function updateHistoryButtons() {
+  const locked=state.fitting || pointerHeld;
+  $('undo-model').disabled=locked || historyIndex<=0;
+  $('redo-model').disabled=locked || historyIndex<0 || historyIndex===modelHistory.length-1;
+}
+
+function recordModel() {
+  const previous=modelHistory[historyIndex];
+  if(!previous || Object.keys(DEFAULTS).some(key=>previous[key]!==state.parameters[key])) {
+    modelHistory.splice(historyIndex+1);
+    modelHistory.push({...state.parameters});
+    if(modelHistory.length>101) modelHistory.shift();
+    historyIndex=modelHistory.length-1;
+  }
+  updateHistoryButtons();
+}
+
+function stepModel(direction) {
+  const target=historyIndex+direction;
+  if(state.fitting || pointerHeld || target<0 || target>=modelHistory.length) return;
+  const before=state.parameters;
+  historyIndex=target;
+  state.parameters={...modelHistory[target]};
+  const changed=Object.keys(DEFAULTS).filter(key=>before[key]!==state.parameters[key]);
+  Object.keys(zoomOptions).forEach(centerSlider);
+  updateControlValues();
+  parametersChanged(false,true,changed.length===1 ? changed[0] : null);
+}
+
+let latestCompleted=null, latestFit=null, previousReference=null;
+let currentCurveLabel='PHOEBE model';
+const plotSettings={preview:true,previous:true,signedLog:false};
+try {
+  const saved=JSON.parse(localStorage.getItem('phoebe.plot.settings')||'{}');
+  for(const key of Object.keys(plotSettings)) if(typeof saved?.[key]==='boolean')plotSettings[key]=saved[key];
+} catch { /* Use default visibility when browser storage is unavailable. */ }
+
 const plotPhases=()=>state.parameters.distortion ? Number($('tidal-phases').value) : 513;
 const geometryKey=()=>JSON.stringify([state.quality,plotPhases(),...Object.keys(DEFAULTS).map(k=>state.parameters[k])]);
 
 function rememberExact(result) {
+  latestCompleted=result;
+  if(result.fit) latestFit=result;
   previousExact=result;
   if(result.fit || result.phases.length!==plotPhases())return;
   const key=geometryKey();
@@ -43,8 +88,10 @@ function restoreExact() {
   if(!saved)return false;
   if(state.current)state.worker?.postMessage({type:'release',id:state.current.id});
   clearTimeout(computeTimer);state.queued=false;state.current=null;
+  const preview=dragView || approximateView();
   clearDisplay();exactPartial=null;
-  state.result={...saved,revision:state.revision};previousExact=state.result;
+  showAgreement(preview,saved,true);
+  state.result={...saved,revision:state.revision};previousExact=state.result;latestCompleted=state.result;
   setBusy(false);$('export-button').disabled=false;
   $('plot-placeholder').hidden=true;
   status(`Exact PHOEBE · ${saved.phases.length} phases · restored`);drawPlots();updateStats();
@@ -53,33 +100,85 @@ function restoreExact() {
 const legend = document.querySelector('.chart-legend span:last-child');
 
 function labelCurve(text) {
+  currentCurveLabel=text;
   legend.lastChild.textContent = text;
   const swatch=legend.querySelector('i');
-  swatch.style.backgroundColor=dragView?.exploratory ? '#b56a08' : '';
-  swatch.style.height=dragView ? '8px' : '';
-  swatch.style.opacity=dragView ? '.36' : '';
-  swatch.style.filter=dragView ? 'blur(1.8px)' : '';
+  const partial=exactPartial?.revision===state.revision;
+  const faint=!!dragView && !partial;
+  legend.hidden=text==='Previous-period PHOEBE curve' || (faint && !plotSettings.preview) || (!dragView && !partial && text.startsWith('Previous PHOEBE curve'));
+  const key=$('preview-overlay-key');
+  key.hidden=!(plotSettings.preview && dragView && partial);
+  if (!key.hidden) {
+    key.title=previewLabel();
+    key.lastChild.textContent=dragView.savedPreview ? 'Saved PHOEBE preview' : dragView.omitted?.length ? key.title : dragView.flatSphere ? 'Spherical preview' :
+      dragView.surfaceMode ? 'Preview · '+dragView.surfaceMode : 'Preview';
+    const previewSwatch=key.querySelector('i');
+    previewSwatch.style.backgroundColor=dragView.exploratory ? '#b56a08' : '#6a59da';
+    previewSwatch.style.opacity='.36';
+    previewSwatch.style.height='7px';
+  }
+  swatch.style.backgroundColor=faint && dragView.exploratory ? '#b56a08' : '';
+  swatch.style.height=faint ? '8px' : '';
+  swatch.style.opacity=faint ? '.36' : '';
+  swatch.style.filter=faint ? 'blur(1.8px)' : '';
 }
 function clearDisplay() {
+  $('preview-agreement').hidden=true;
   dragView = null;
   labelCurve('PHOEBE model');
 }
 
+function clearUnheated(p) {
+  return p.irradiation === false && inSliderRanges(p) && detachedWithin(p,{}) &&
+    clearSeparation(p,p.distortion ? 1.2 : 1);
+}
+
+function nearTidalLimit(p) {
+  return p.distortion && !detachedWithin(p,{},.85);
+}
+function secondaryOverflows(p) {
+  const spec=eccentricSweepSpec;
+  return spec && p.eccentricity>=spec.secondaryLimit &&
+    ['mass_ratio','radius_primary','radius_secondary'].every(key=>p[key]===spec.fixed[key]);
+}
+function nearLimitLabel(p) {
+  return secondaryOverflows(p)?'Secondary fills its Roche lobe at periastron':'Near Roche limit · waiting for PHOEBE';
+}
 function approximateView() {
   const p=state.parameters;
   const omitted=[p.distortion && 'tides',p.irradiation && 'heating'].filter(Boolean);
-  if (!state.dataset || !predictDisplay || (state.quality!=='preview' && !omitted.length)) return null;
+  if (!state.dataset || !predictDisplay || secondaryOverflows(p)) return null;
+  if(nearRocheReference && Object.entries(nearRocheReference.parameters).every(([key,value])=>p[key]===value)){
+    const mode=p.distortion?(p.irradiation?'tides and heating':'tides'):(p.irradiation?'heating':'spherical');
+    const curve={phases:nearRocheReference.phases,model:nearRocheReference.models[mode]};
+    return {...compareDisplayCurve(curve,normalizedData()),savedPreview:true,surfaceMode:mode,omitted:[]};
+  }
+  const eccentricSweep=predictEccentricSweep?.(p);
+  if(eccentricSweep)return {...eccentricSweep,...compareDisplayCurve(eccentricSweep,normalizedData()),omitted:[]};
+  const clear = clearUnheated(p);
+  if (clear && !p.distortion) {
+    // Two unheated spherical photospheres present constant projected light.
+    const line = {phases:[-.5,.5],model:[1,1]};
+    return {...compareDisplayCurve(line,normalizedData()),flatSphere:true,omitted:[]};
+  }
+  if (state.quality!=='preview' && !omitted.length) return null;
   // Epoch places observations in phase. The phase-domain geometry uses a relative origin.
-  const surface=state.quality==='preview' && predictSurface?.(p);
-  const curve=surface || predictDisplay({...p,epoch:0,distortion:false,irradiation:false});
+  const geometry=clear ? {...p,epoch:0} : p;
+  const sweep=predictTemperature?.(geometry);
+  const surface=(sweep?.preferInOverlap ? sweep : null) ?? predictSurface?.(geometry) ?? predictRegional?.(geometry) ?? sweep;
+  const sphere={...p,epoch:0,distortion:false,irradiation:false};
+  const calibratedSphere=!omitted.length && (joint(sphere) ?? paired(sphere));
+  const broad=!surface && !calibratedSphere && (predictBroad?.({...p,epoch:0}) ?? predictNear?.(p));
+  if(!surface && !broad && nearTidalLimit(p))return null;
+  const curve=surface || calibratedSphere || broad || predictDisplay(sphere) || (omitted.length && inSliderRanges(sphere) && discModel(sphere));
   if (!curve) return null;
   const scaled=compareDisplayCurve(curve, normalizedData());
-  return {...curve,...scaled,exploratory:!!(omitted.length||curve.exploratory),omitted:surface ? [] : omitted};
+  return {...curve,...scaled,exploratory:!!(omitted.length||curve.exploratory),omitted:(surface || broad) ? [] : omitted};
 }
 
 // Both lists are sorted in phase. A single pass also handles the uneven grids
 // produced while the exact curve is being refined.
-function compareDisplayCurve(curve, obs) {
+function compareDisplayCurve(curve, obs, matchObservations=true) {
   const x=curve.phases, y=curve.model;
   const predicted=[];
   let j=0, numerator=0, denominator=0;
@@ -91,9 +190,28 @@ function compareDisplayCurve(curve, obs) {
     const weight=obs.sigma ? 1/obs.sigma[i]**2 : 1;
     predicted.push(flux);numerator+=weight*obs.flux[i]*flux;denominator+=weight*flux*flux;
   }
-  const scale=numerator/denominator;
+  const scale=matchObservations ? numerator/denominator : 1;
+  const modelAtData=predicted.map(f=>scale*f);
   return {phases:x,model:y.map(f=>scale*f),
-          comparison:{...obs,residual:predicted.map((f,i)=>obs.flux[i]-scale*f)}};
+          comparison:{...obs,model_at_data:modelAtData,residual:modelAtData.map((f,i)=>obs.flux[i]-f)}};
+}
+
+function showAgreement(preview, exact, complete) {
+  const target=$('preview-agreement');
+  target.hidden=!preview;
+  if (!preview) return;
+  const x=preview.phases, y=preview.model;
+  let j=0, squared=0;
+  for (let i=0;i<exact.phases.length;i++) {
+    const phase=exact.phases[i];
+    while (j<x.length-2 && x[j+1]<phase) j++;
+    const t=Math.max(0,Math.min(1,(phase-x[j])/(x[j+1]-x[j])));
+    const delta=y[j]+t*(y[j+1]-y[j])-exact.model[i];
+    squared+=delta*delta;
+  }
+  const rms=Math.sqrt(squared/exact.phases.length);
+  const progress=complete ? 'Final' : 'So far';
+  target.textContent=progress+' · Preview vs PHOEBE · RMS '+(100*rms).toFixed(3)+'% of normalized flux · '+exact.phases.length+' phase points';
 }
 
 function timingDisplay() {
@@ -107,13 +225,14 @@ function timingDisplay() {
   const approximate=approximateView();
   if(approximate)return {...approximate,label:approximate.omitted.length?'Preview · spherical approximation':'Preview · approximate curve'};
   const prior=candidates.find(c=>sameGeometry(c,true));
-  if(prior)return {...compareDisplayCurve(prior,normalizedData()),prior:true,label:'Preview · PHOEBE curve at previous period'};
+  if(prior)return {...compareDisplayCurve(prior,normalizedData()),prior:true,source:prior,label:'Preview · PHOEBE curve at previous period'};
   return null;
 }
 
 function releasePointer() {
   if (!pointerHeld) return;
   pointerHeld=false;
+  recordModel();
   scheduleCompute(80);
 }
 window.addEventListener('pointerup',releasePointer);
@@ -194,14 +313,15 @@ function renderControls() {
         updateControlValues();parametersChanged(source===range,false,key);
       };
       number.addEventListener('change',()=>update(number));
-      if(range) {range.addEventListener('pointerdown',()=>{pointerHeld=true;clearTimeout(computeTimer);});range.addEventListener('input',()=>update(range));range.addEventListener('change',()=>scheduleCompute(80));}
+      if(range) {range.addEventListener('pointerdown',()=>{pointerHeld=true;updateHistoryButtons();clearTimeout(computeTimer);});range.addEventListener('input',()=>update(range));range.addEventListener('change',()=>scheduleCompute(80));}
     }
     $('parameter-controls').append(section);
   }
-  for(const key of ['distortion','irradiation']) $(key).addEventListener('change',()=>{state.parameters[key]=$(key).checked;parametersChanged(false,true);});
+  for(const key of ['distortion','irradiation']) $(key).addEventListener('change',()=>{state.parameters[key]=$(key).checked;drawStarGuide(state.parameters);parametersChanged(false,true);});
   updateControlValues();
 }
 
+const drawStarGuide=bindStarGuide($('star-shape'),$('star-view'));
 function updateControlValues() {
   for(const [key,{number,range,digits,min,max}] of parameterInputs) {
     const zoom=zoomOptions[key];
@@ -221,8 +341,32 @@ function updateControlValues() {
     range.style.setProperty('--fill',100*(Number(range.value)-Number(range.min))/(Number(range.max)-Number(range.min))+'%');
   }
   $('distortion').checked=state.parameters.distortion;$('irradiation').checked=state.parameters.irradiation;
-  const a=56*state.parameters.radius_primary/.21,b=56*state.parameters.radius_secondary/.21;
-  Object.assign($('primary-star').style,{width:`${a}px`,height:`${a}px`});Object.assign($('secondary-star').style,{width:`${b}px`,height:`${b}px`});
+  drawStarGuide(state.parameters);
+}
+
+function previewLabel() {
+  if (dragView.savedPreview) return 'Saved PHOEBE preview · '+dragView.surfaceMode+' · 256 phases';
+  if (dragView.flatSphere) return 'Spherical preview · no heating or eclipses';
+  return dragView?.surfaceMode ? 'Approximate surface preview · '+dragView.surfaceMode+(dragView.surfaceRegion?' · '+dragView.surfaceRegion:'')+(state.quality==='refined'?' · preview model':'') : dragView?.omitted?.length
+    ? 'Approximate spherical curve · '+dragView.omitted.join(' and ')+' omitted'+(dragView.atEdge?' · atmosphere clamped':'')
+    : dragView?.exploratory
+    ? ['Approximate · eight-slider neural preview', dragView.periodOutside ? 'outside joint training periods' : '', dragView.atEdge ? 'atmosphere clamped' : ''].filter(Boolean).join(' · ')
+    : 'Approximate · drag preview';
+}
+
+function refreshPreview() {
+  if (!state.dataset || state.fitting ||
+      state.result?.revision===state.revision || exactPartial?.revision===state.revision ||
+      timingRevision===state.revision) return;
+  const curve=approximateView();
+  if (!curve) {
+    if(nearTidalLimit(state.parameters) || secondaryOverflows(state.parameters))labelCurve(nearLimitLabel(state.parameters));
+    return;
+  }
+  dragView=curve;
+  labelCurve(previewLabel());
+  $('plot-placeholder').hidden=true;
+  drawPlots();
 }
 
 function unavailableReason() {
@@ -237,6 +381,9 @@ function unavailableReason() {
   return 'Drag preview unavailable · waiting for PHOEBE';
 }
 function parametersChanged(slider=false,physics=false,key=null) {
+  if(!pointerHeld)recordModel();
+  previousReference=latestFit||latestCompleted;
+  $('preview-agreement').hidden=true;
   const interrupt=physics && state.current?.type==='compute' &&
     ((state.current.tides && !state.parameters.distortion) || (state.current.heating && !state.parameters.irradiation));
   if(interrupt)startEngine();
@@ -247,13 +394,8 @@ function parametersChanged(slider=false,physics=false,key=null) {
   timingRevision=key==='epoch'||key==='period' ? state.revision : -1;
   liveTiming=timingRevision===state.revision ? timingDisplay() : null;
   if(timingRevision===state.revision)dragView=liveTiming?.omitted ? liveTiming : null;
-  else dragView=slider || physics || state.parameters.distortion || state.parameters.irradiation ? approximateView() : null;
-  const dragLabel=dragView?.surfaceMode ? 'Approximate surface preview · '+dragView.surfaceMode : dragView?.omitted?.length
-    ? 'Approximate spherical curve · '+dragView.omitted.join(' and ')+' omitted'+(dragView.atEdge?' · atmosphere clamped':'')
-    : dragView?.exploratory
-    ? ['Approximate · eight-slider neural preview', dragView.periodOutside ? 'outside joint training periods' : '', dragView.atEdge ? 'atmosphere clamped' : ''].filter(Boolean).join(' · ')
-    : 'Approximate · drag preview';
-  labelCurve(dragView ? dragLabel : liveTiming ? (liveTiming.prior?'Previous-period PHOEBE curve':'Exact PHOEBE curve · updated phases') : previousExact ? 'Previous PHOEBE curve · awaiting recalculation' :
+  else dragView=slider || physics || state.parameters.distortion || state.parameters.irradiation || clearUnheated(state.parameters) ? approximateView() : null;
+  labelCurve(dragView ? previewLabel() : liveTiming ? (liveTiming.prior?'Previous-period PHOEBE curve':'Exact PHOEBE curve · updated phases') : (nearTidalLimit(state.parameters) || secondaryOverflows(state.parameters)) ? nearLimitLabel(state.parameters) : previousExact ? 'Previous PHOEBE curve · awaiting recalculation' :
     slider ? unavailableReason() : 'Waiting for PHOEBE');
   if(dragView) $('plot-placeholder').hidden=true;
   status('Parameters changed · waiting for PHOEBE','busy');
@@ -269,7 +411,7 @@ function parametersChanged(slider=false,physics=false,key=null) {
 }
 function scheduleCompute(delay=450) {clearTimeout(computeTimer);computeTimer=setTimeout(()=>requestModel('compute'),delay);}
 function setBusy(busy,fitting=false) {
-  state.busy=busy;state.fitting=fitting;
+  state.busy=busy;state.fitting=fitting;updateHistoryButtons();
   $('fit-button').disabled=!state.ready||busy||state.result?.revision!==state.revision;
   $('stop-button').hidden=!busy;
   document.querySelectorAll('.quality').forEach(button=>{button.disabled=fitting;});
@@ -286,10 +428,11 @@ function startEngine() {
   clearInterval(elapsedTimer);
   if(state.worker)state.worker.terminate();
   state.ready=false;setBusy(false);state.queued=false;state.current=null;
+  refreshPreview();
   $('engine-banner').hidden=false;$('engine-retry').hidden=true;
   $('engine-pill').innerHTML='<span class="status-dot loading"></span>Loading engine';
   status('Starting the browser engine…','busy');
-  state.worker=new Worker(new URL('./engine.worker.js?v=fb346b55717006fd',import.meta.url),{type:'module'});
+  state.worker=new Worker(new URL('./engine.worker.js?v=a2151386603b44c9',import.meta.url),{type:'module'});
   const worker=state.worker;
   state.worker.onmessage=({data})=>{
     if(worker!==state.worker)return;
@@ -309,10 +452,13 @@ function startEngine() {
         state.current=null;setBusy(false);requestModel('compute');return;
       }
       state.parameters={...data.parameters};
+      recordModel();
       current.revision=++state.revision;
       Object.keys(zoomOptions).forEach(centerSlider);
       updateControlValues();clearDisplay();
-      if(previousExact)labelCurve('Previous PHOEBE curve · drawing fitted parameters');
+      dragView=approximateView();
+      if(dragView)labelCurve(previewLabel());
+      else if(previousExact)labelCurve('Previous PHOEBE curve · drawing fitted parameters');
       drawPlots();updateStats();
       status('Fit search complete · drawing the fitted PHOEBE curve','busy');
       state.worker.postMessage({type:'continue',id:current.id});
@@ -335,13 +481,14 @@ function startEngine() {
         state.worker.postMessage({type:'continue',id:current.id});
       };
       if(current.revision===state.revision && !pointerHeld && !current.stopped) {
-        clearDisplay();
-        exactPartial={revision:current.revision,phases:data.phases,model:data.model};
+        // The worker already scaled this partial curve to the observations.
+        exactPartial={revision:current.revision,...compareDisplayCurve(data,normalizedData(),false)};
         previousExact=exactPartial;
         if(timingRevision===state.revision){
-          liveTiming={...compareDisplayCurve(exactPartial,normalizedData()),label:`Preview · ${data.phases.length}-point PHOEBE curve`};
+          liveTiming={...exactPartial,label:`Preview · ${data.phases.length}-point PHOEBE curve`};
         }
         $('plot-placeholder').hidden=true;
+        showAgreement(dragView,exactPartial,false);
         labelCurve(`PHOEBE model · ${data.phases.length} points`);
         status(`Exact PHOEBE · ${data.phases.length} of ${current.plotCount} phase points`,'busy');
         drawPlots();updateStats();
@@ -357,7 +504,9 @@ function startEngine() {
       state.current=null;
       setBusy(false);
       if(matches) {
-        clearDisplay();exactPartial=null;state.result=data.result;state.result.revision=state.revision;
+        const preview=dragView;
+        clearDisplay();exactPartial=null;state.result=data.result;
+        showAgreement(preview,state.result,true);state.result.revision=state.revision;
         rememberExact(state.result);
         $('plot-placeholder').hidden=true;$('export-button').disabled=false;$('fit-button').disabled=false;
         let text=`${data.result.quality==='refined'?'Refined':'Preview'} model · ${data.result.phases.length} phases · ${data.result.seconds.toFixed(1)} s`;
@@ -378,7 +527,8 @@ function startEngine() {
       if(state.queued) {state.queued=false;requestModel('compute');return;}
       if(outdated)return;
       if(dragView?.exploratory)labelCurve((dragView.omitted?.length ? 'Spherical estimate · '+dragView.omitted.join(' and ')+' omitted' : 'Exploratory only')+' · exact PHOEBE calculation failed');
-      if(!dragView && previousExact)labelCurve('Previous PHOEBE curve · current calculation failed');
+      if(secondaryOverflows(state.parameters))labelCurve(nearLimitLabel(state.parameters));
+      else if(!dragView && previousExact)labelCurve('Previous PHOEBE curve · current calculation failed');
       if(/out of memory|memory access out of bounds|wasm trap|aborted\(/i.test(data.error)) {
         engineFailed=true;state.ready=false;$('engine-banner').hidden=false;$('engine-retry').hidden=false;
         $('engine-title').textContent='The numerical engine needs to restart';$('engine-detail').textContent=cleanError(data.error);
@@ -399,7 +549,8 @@ function requestModel(type='compute',fit=[]) {
   if(!state.ready){if(engineFailed)startEngine();return;}
   if(state.busy){state.queued=true;return;}
   state.result=null;exactPartial=null;
-  if(type==='fit'){liveTiming=null;timingRevision=-1;}
+  if(type==='fit'){previousReference=latestFit||latestCompleted;clearDisplay();liveTiming=null;timingRevision=-1;}
+  else if(!dragView) refreshPreview();
   if(type==='fit' && previousExact)labelCurve('Previous PHOEBE curve · fitting');
   $('export-button').disabled=true;updateStats();drawPlots();
   const id=++state.request;
@@ -461,27 +612,93 @@ function drawTimeSeries() {
 
 const drawVelocityPlot=bindVelocityPlot($('rv-panel'));
 function drawPlots() {drawVelocityPlot(state.parameters,state.dataset);drawTimeSeries();drawChart($('light-curve'),false);drawChart($('residual-curve'),true);}
+// Same fractional scale used in the LFHCal signed-log calibration residual plots.
+const residualScale=1e-4;
+function signedLogFraction(fraction){
+  return Math.sign(fraction)*Math.log1p(Math.abs(fraction)/residualScale)/Math.LN10;
+}
+
+function plottedResiduals(comparison,signedLog){
+  const residuals=comparison?.residual || [];
+  if(!signedLog)return residuals;
+  return residuals.map((delta,i)=>{
+    const model=comparison.model_at_data?.[i] ?? (comparison.flux[i]-delta);
+    return model>0 && Number.isFinite(model) ? signedLogFraction(delta/model) : NaN;
+  });
+}
+
+function signedResidualTicks(limit,height){
+  const ticks=[{value:0,label:'0%'}];
+  // Label the axis in fractional percentages. Keep a readable space between
+  // decade labels on narrow or short displays, including the central zero.
+  let last=Infinity;
+  for(let power=Math.ceil(limit);power>=0;power--){
+    const fraction=residualScale*10**power,value=signedLogFraction(fraction);
+    if(value>limit || Math.min(last-value,value)*height/(2*limit)<12)continue;
+    const label=(fraction*100).toLocaleString('en-US',{maximumFractionDigits:2})+'%';
+    ticks.push({value,label:'+'+label},{value:-value,label:'−'+label});
+    last=value;
+  }
+  return ticks;
+}
 function drawChart(canvas,residual) {
+  const signedLog=residual && plotSettings.signedLog;
+  if(residual){
+    canvas.classList.toggle('signed-log',signedLog);
+    $('residual-scale').textContent=signedLog?'· (observed − model) / model · signed log':'· observed − model';
+    canvas.setAttribute('aria-label',signedLog
+      ? 'Fractional observed minus model residuals versus orbital phase on a signed-log scale, labeled as percentages'
+      : 'Observed minus modeled flux versus orbital phase, with halos on preview residuals');
+  }
   const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;
   const dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;
   const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
   const w=rect.width,h=rect.height,L=49,R=18,T=residual?8:20,B=residual?23:26,iw=w-L-R,ih=h-T-B;
   const current=state.result?.revision===state.revision ? state.result : null;
-  const live=!current && timingRevision===state.revision ? liveTiming : null;
-  const comparison=current?.comparison||live?.comparison||normalizedData();
-  const visible=dragView||(exactPartial?.revision===state.revision ? exactPartial : null)||current||live||previousExact;
-  const previous=live?.prior || (visible && visible===previousExact && !dragView && !current && !exactPartial);
-  let ys=residual?(comparison.residual||[]):comparison.flux||[];
-  const model=residual?[]:visible?.model||[];
+  const showPrior=plotSettings.previous && (!previousReference || previousReference===liveTiming?.source);
+  const showTiming=timingRevision===state.revision && (!liveTiming?.prior || showPrior);
+  const live=!current && showTiming ? liveTiming : null;
+  const partial=exactPartial?.revision===state.revision ? exactPartial : null;
+  const visible=partial || (dragView ? null : current||live);
+  const faintPreview=plotSettings.preview ? dragView : null;
+  const comparison=visible?.comparison||faintPreview?.comparison||normalizedData();
+  const previewPoints=faintPreview?.comparison;
+  if(residual) {
+    const sources=[];
+    if(previewPoints) sources.push('Preview halo');
+    if(partial) sources.push('PHOEBE · '+partial.phases.length+' phases');
+    else if(current) sources.push('PHOEBE');
+    else if(visible?.label) sources.push(visible.label);
+    $('residual-summary').textContent=sources.length ? sources.join(' + ')+' · '+comparison.phase.length+' observations' : '—';
+  }
+  const reference=!current && plotSettings.previous && previousReference && previousReference!==visible?.source && previousReference.model!==visible?.model ? previousReference : null;
+  if (!residual) {
+    const key=$('previous-curve-key');
+    const prior=reference || visible?.source;
+    key.hidden=!prior;
+    if(prior)key.lastChild.textContent=prior.fit ? 'Previous fit' : 'Previous model';
+  }
+  const ys=residual ? plottedResiduals(visible?.comparison,signedLog) : comparison.flux;
+  const previewY=residual ? plottedResiduals(previewPoints,signedLog) : [];
+  const model=residual?[]:[...(visible?.model||[]),...(faintPreview?.model||[]),...(reference?.model||[])];
   let min,max;
-  if(residual){const a=Math.max(.005,...ys.map(Math.abs))*1.2;min=-a;max=a;}
+  if(residual){
+    const extent=Math.max(signedLog?signedLogFraction(residualScale):.005,
+      ...ys.filter(Number.isFinite).map(Math.abs),...previewY.filter(Number.isFinite).map(Math.abs));
+    min=-1.2*extent;max=1.2*extent;
+  }
   else{const all=[...ys,...model];min=all.length?Math.min(...all):.65;max=all.length?Math.max(...all):1.05;const gap=Math.max(.03,(max-min)*.15);min-=gap;max+=gap;}
   const px=(x)=>L+(x+.5)*iw,py=(y)=>T+(max-y)/(max-min)*ih;
   ctx.clearRect(0,0,w,h);ctx.font='10px system-ui, sans-serif';ctx.lineWidth=1;
-  for(let i=0;i<=(residual?2:4);i++) {
-    const value=min+(max-min)*i/(residual?2:4),pos=py(value);
+  const divisions=residual?2:4;
+  const ticks=signedLog?signedResidualTicks(max,ih):Array.from({length:divisions+1},(_,i)=>{
+    const value=min+(max-min)*i/divisions;
+    return {value,label:value.toFixed(residual?3:2)};
+  });
+  for(const {value,label} of ticks) {
+    const pos=py(value);
     ctx.strokeStyle='#efedf3';ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(L,pos);ctx.lineTo(w-R,pos);ctx.stroke();
-    ctx.fillStyle='#9a96a3';ctx.textAlign='right';ctx.fillText(value.toFixed(residual?3:2),L-9,pos+3);
+    ctx.fillStyle='#9a96a3';ctx.textAlign='right';ctx.fillText(label,L-9,pos+3);
   }
   for(const x of [-.5,-.25,0,.25,.5]) {
     ctx.strokeStyle='#f1eff5';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(px(x),T);ctx.lineTo(px(x),h-B);ctx.stroke();
@@ -490,25 +707,45 @@ function drawChart(canvas,residual) {
   if(residual){ctx.strokeStyle='#bcb4d3';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(L,py(0));ctx.lineTo(w-R,py(0));ctx.stroke();}
   else{ctx.save();ctx.translate(12,T+ih/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#8c8796';ctx.textAlign='center';ctx.fillText('Normalized flux',0,0);ctx.restore();}
   ctx.save();ctx.beginPath();ctx.rect(L,T,iw,ih);ctx.clip();ctx.setLineDash([]);
+  if(residual && previewPoints) {
+    const color=faintPreview.exploratory ? '181,106,8' : '106,89,218';
+    // A translucent outer disc distinguishes the preview under incoming PHOEBE points.
+    for(const [radius,alpha] of [[4.2,.12],[1.8,.43]]) {
+      ctx.fillStyle='rgba('+color+','+alpha+')';
+      ctx.beginPath();
+      for(let i=0;i<previewPoints.phase.length;i++){
+        if(!Number.isFinite(previewY[i]))continue;
+        const x=px(previewPoints.phase[i]), y=py(previewY[i]);
+        ctx.moveTo(x+radius,y);ctx.arc(x,y,radius,0,2*Math.PI);
+      }
+      ctx.fill();
+    }
+  }
   const xs=comparison.phase||[];
   for(let i=0;i<ys.length;i++) {
+    if(!Number.isFinite(ys[i]))continue;
     const x=px(xs[i]),y=py(ys[i]);
     if(!residual&&comparison.sigma?.[i]) {ctx.strokeStyle='#bbc0d25a';ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(x,py(ys[i]-comparison.sigma[i]));ctx.lineTo(x,py(ys[i]+comparison.sigma[i]));ctx.stroke();}
-    ctx.fillStyle=residual?(live && live.label.startsWith('Preview')?'#b56a088c':'#8e83bd9c'):'#737b969c';ctx.beginPath();ctx.arc(x,y,residual?1.7:2,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=residual?(visible?.prior?'#888494':'#6e5ba9c9'):'#737b969c';ctx.beginPath();ctx.arc(x,y,residual?1.7:2,0,Math.PI*2);ctx.fill();
   }
-  if(!residual&&visible) {
-    ctx.strokeStyle=previous ? '#888494' : dragView?.exploratory ? '#b56a08' : '#6a59da';
-    ctx.lineWidth=dragView ? 14 : 2.2;
-    if(dragView) {
-      ctx.globalAlpha=.30;
-      ctx.lineJoin='round';
-      ctx.lineCap='round';
-      ctx.shadowColor=dragView.exploratory ? 'rgba(181,106,8,.5)' : 'rgba(106,89,218,.5)';
-      ctx.shadowBlur=4*dpr;
-      if('filter' in ctx) ctx.filter=`blur(${2.5*dpr}px)`;
+  if(!residual) {
+    for (const curve of [faintPreview,reference,visible]) {
+      if (!curve) continue;
+      const faint=curve===faintPreview;
+      const dashed=curve===reference || curve.prior;
+      ctx.save();
+      ctx.strokeStyle=dashed ? '#27716e' : faint && curve.exploratory ? '#b56a08' : '#6a59da';
+      ctx.lineWidth=faint ? 12 : dashed ? 1.8 : 2.2;
+      if(faint) {
+        ctx.globalAlpha=.30;
+        ctx.lineJoin='round';
+        ctx.lineCap='round';
+        if('filter' in ctx) ctx.filter=`blur(${2*dpr}px)`;
+      }
+      ctx.setLineDash(dashed ? [6,4] : []);ctx.beginPath();
+      curve.phases.forEach((phase,i)=>i ? ctx.lineTo(px(phase),py(curve.model[i])) : ctx.moveTo(px(phase),py(curve.model[i])));
+      ctx.stroke();ctx.restore();
     }
-    ctx.setLineDash(previous?[5,4]:[]);ctx.beginPath();
-    visible.phases.forEach((x,i)=>i?ctx.lineTo(px(x),py(model[i])):ctx.moveTo(px(x),py(model[i])));ctx.stroke();
   }
   ctx.restore();canvas.chart={L,R,T,B,px,py,min,max,w,h,data:comparison};
 }
@@ -516,13 +753,13 @@ function drawChart(canvas,residual) {
 function updateStats() {
   const current=state.result?.revision===state.revision ? state.result : null;
   const live=timingRevision===state.revision ? liveTiming : null;
-  $('residual-summary').textContent=current?`${current.comparison.residual.length} points`:live?.label||'—';
   const c=current?.comparison;$('rms-stat').textContent=c?c.rms.toFixed(4):'—';$('chi-stat').textContent=c?.reduced_chi2!=null?c.reduced_chi2.toFixed(2):'—';
   $('chi-note').textContent=!current && live?'Waiting for completed PHOEBE result':c?.reduced_chi2!=null?'Uses measurement errors':'Add errors to estimate χ²';
 }
 
 function installDataset(dataset,parameters=null) {
-  validateDataset(dataset);exampleRequest++;clearDisplay();exactPartial=null;previousExact=null;exactHistory.clear();state.dataset=dataset;if(parameters)state.parameters={...DEFAULTS,...parameters};
+  validateDataset(dataset);
+  $('rv-error').textContent='';exampleRequest++;clearDisplay();exactPartial=null;previousExact=null;latestCompleted=null;latestFit=null;previousReference=null;exactHistory.clear();state.dataset=dataset;if(parameters)state.parameters={...DEFAULTS,...parameters};
   $('time-panel').hidden=dataset.x_kind!=='time';
   if(dataset.x_kind==='time'){
     state.parameters.period=parameters?.period??dataset.period;
@@ -531,6 +768,7 @@ function installDataset(dataset,parameters=null) {
     $('time-origin').textContent='Days since '+origin.toFixed(5)+(dataset.time_system?' ('+dataset.time_system+')':'')+
       ' · '+(dataset.y_kind==='magnitude'?'magnitude':'flux')+' · dashed guides mark phase zero';
   }
+  modelHistory.length=0;historyIndex=-1;recordModel();
   $('period-span').value=dataset.x_kind==='time'?'0.001':'full';
   $('epoch-span').value='0.001';$('eccentricity-span').value='full';
   Object.keys(zoomOptions).forEach(centerSlider);
@@ -540,11 +778,17 @@ function installDataset(dataset,parameters=null) {
     const origin=dataset.synthetic?'Synthetic PHOEBE':dataset.provenance.catalog==='Kepler Eclipsing Binary Catalog, third revision'?'Kepler observations':'Observations';
     $('dataset-description').textContent=origin+' · '+dataset.x.length+' points · '+dataset.description;
   }
-  $('export-button').disabled=true;$('fit-button').disabled=true;requestModel('compute');
+  $('export-button').disabled=true;$('fit-button').disabled=true;refreshPreview();requestModel('compute');
 }
 
 function validateDataset(d) {
   if(!d||!Array.isArray(d.x)||!Array.isArray(d.y)||d.x.length!==d.y.length||d.x.length<8||d.x.length>5000)throw Error('Choose between 8 and 5,000 observations with matching coordinates and brightness values.');
+  if(d.radial_velocity){
+    validateVelocity(d.radial_velocity);
+    if(d.x_kind==='phase' && d.radial_velocity.axis==='time' &&
+       !(Number.isFinite(d.radial_velocity.reference_epoch) && Number.isFinite(d.radial_velocity.reference_period) && d.radial_velocity.reference_period>0))
+      throw Error('Time-based radial velocities need the folding ephemeris for this phase-only light curve.');
+  }
   if(!['time','phase'].includes(d.x_kind)||!['flux','magnitude'].includes(d.y_kind))throw Error('Choose the coordinate and brightness formats.');
   if(!d.x.every(Number.isFinite)||!d.y.every(Number.isFinite))throw Error('Some selected data values are missing or non-numeric.');
   if(d.y_kind==='flux'&&d.y.some(v=>v<=0))throw Error('Flux values must be greater than zero.');
@@ -600,6 +844,46 @@ async function loadExample(notify=true) {
   }catch(e){if(id===exampleRequest)toast(cleanError(e));}
 }
 function bindEvents() {
+  $('undo-model').onclick=()=>stepModel(-1);
+  $('redo-model').onclick=()=>stepModel(1);
+  window.addEventListener('keydown',event=>{
+    if(!(event.ctrlKey || event.metaKey) || event.altKey || document.querySelector('dialog[open]'))return;
+    if(event.target.isContentEditable || event.target.closest('textarea,select,input:not([type="range"]):not([type="checkbox"])'))return;
+    const key=event.key.toLowerCase();
+    if(key!=='z' && key!=='y')return;
+    const redo=key==='y' || event.shiftKey;
+    if($(redo?'redo-model':'undo-model').disabled)return;
+    event.preventDefault();stepModel(redo?1:-1);
+  });
+
+  for(const key of Object.keys(plotSettings)) {
+    const checkbox=$('show-'+key);
+    checkbox.checked=plotSettings[key];
+    checkbox.addEventListener('change',()=>{
+      plotSettings[key]=checkbox.checked;
+      try { localStorage.setItem('phoebe.plot.settings',JSON.stringify(plotSettings)); } catch { /* Session only. */ }
+      labelCurve(currentCurveLabel);
+      drawPlots();
+    });
+  }
+  $('rv-file').onchange=async event=>{
+    const dataset=state.dataset,file=event.target.files[0];event.target.value='';
+    if(!dataset || !file)return;
+    try{
+      const velocities=parseVelocity(await file.text(),dataset);
+      if(dataset!==state.dataset)return;
+      velocities.source=file.name;
+      dataset.radial_velocity=velocities;
+      $('rv-error').textContent='';
+      drawVelocityPlot(state.parameters,dataset,true);
+    }catch(error){if(dataset===state.dataset)$('rv-error').textContent=error.message;}
+  };
+  $('rv-gamma').onchange=event=>{
+    const data=state.dataset?.radial_velocity;
+    if(!data)return;
+    if(Number.isFinite(event.target.valueAsNumber))data.gamma=event.target.valueAsNumber;
+    drawVelocityPlot(state.parameters,state.dataset,true);
+  };
   $('rv-rescale').onclick=()=>drawVelocityPlot(state.parameters,state.dataset,true);
   for(const el of document.querySelectorAll('.close-dialog'))el.addEventListener('click',()=>el.closest('dialog').close());
   for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',(e)=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
@@ -689,20 +973,93 @@ const discModel=makeDiscModel(artifact.table,artifact.n,artifact.fixed);
 const exploratory=makeEightPredictor(eightSpec,discModel);
 // The optional drag artifact can load alongside the exact lab.
 Promise.all([
-  import('../experiment/surface_predict.mjs'),
+  import('../experiment/surface_predict.mjs?v=e7747d141ba9063d'),
   fetch(new URL('../experiment/surface.json',import.meta.url)).then(response=>{
     if(!response.ok) throw Error(`Surface preview data returned ${response.status}`);
     return response.json();
   }),
-]).then(([module,specs])=>{predictSurface=module.makeSurfacePredictor(specs,discModel);})
+]).then(([module,specs])=>{predictSurface=module.makeSurfacePredictor(specs,discModel);refreshPreview();})
   .catch(error=>console.warn('Surface drag preview unavailable',error));
+Promise.all([
+  import('../experiment/surface_predict.mjs?v=e7747d141ba9063d'),
+  fetch(new URL('../experiment/temperature-tides.json?v=c6980a8ff31771f6',import.meta.url)).then(response=>{
+    if(!response.ok)throw Error(response.status);
+    return response.json();
+  }),
+]).then(([module,sweeps])=>{
+  predictTemperature=module.makeTemperaturePredictor(sweeps);
+  refreshPreview();
+}).catch(error=>console.warn('Temperature sweep unavailable',error));
+Promise.all([
+  import('../experiment/broad-predict.mjs?v=5ec4cc7cc1c776c2'),
+  fetch(new URL('../experiment/broad-model.json',import.meta.url)).then(r=>r.json()),
+  fetch(new URL('../study/table.json?v=dae38a397d622654',import.meta.url)).then(r=>r.json()),
+]).then(([module,spec,table])=>{
+  predictBroad=module.makeBroadPredictor(spec,table);
+  refreshPreview();
+}).catch(error=>console.warn('Broad slider preview unavailable',error));
+Promise.all([
+  import('../experiment/near-lobe.mjs?v=5402c5211bfbd7c5'),
+  fetch(new URL('../experiment/near-lobe-model.json?v=65656d7dc425af16',import.meta.url)).then(r=>r.json()),
+  fetch(new URL('../study/table.json?v=dae38a397d622654',import.meta.url)).then(r=>r.json()),
+]).then(([module,spec,table])=>{
+  predictNear=module.makeNearPredictor(spec,table);
+  refreshPreview();
+}).catch(error=>console.warn('Near-lobe preview unavailable',error));
+Promise.all([
+  import('../experiment/surface_predict.mjs?v=e7747d141ba9063d'),
+  fetch(new URL('../experiment/eccentric-lobe.json?v=e111e69153377790',import.meta.url))
+    .then(response=>{if(!response.ok)throw Error(response.status);return response.json();}),
+]).then(([module,spec])=>{
+  predictEccentricSweep=module.makeEccentricLobePredictor(spec);
+  eccentricSweepSpec=spec;
+  refreshPreview();
+}).catch(error=>console.warn('Near-lobe eccentricity sweep unavailable',error));
+fetch(new URL('../experiment/near-roche-reference.json?v=658bddb7c8e01386',import.meta.url))
+  .then(response=>{if(!response.ok)throw Error(response.status);return response.json();})
+  .then(reference=>{nearRocheReference=reference;refreshPreview();})
+  .catch(error=>console.warn('Near-lobe reference unavailable',error));
+const regionDetails=document.createElement('details');
+regionDetails.className='small';
+const regionTitle=document.createElement('summary');
+regionTitle.textContent='Surface preview ranges';
+regionDetails.append(regionTitle);
+const regionLabels={inclination:'Inclination (°)',radius_primary:'Primary radius / separation',
+  radius_secondary:'Secondary radius / separation',temperature_ratio:'Temperature ratio',
+  mass_ratio:'Mass ratio',period:'Period (days)',eccentricity:'Eccentricity',omega:'Periastron (°)'};
+Promise.all([
+  import('../experiment/regional-surface.mjs?v=8d3e42c13d757728'),
+  fetch(new URL('../experiment/regional-model.json?v=856518b1d926d27c',import.meta.url)).then(r=>r.json()),
+  fetch(new URL('../study/table.json?v=dae38a397d622654',import.meta.url)).then(r=>r.json()),
+  fetch(new URL('../experiment/non-eclipsing-tides.json?v=13d5f07ced6b33cf',import.meta.url))
+    .then(response=>{if(!response.ok)throw Error(response.status);return response.json();})
+    .catch(error=>{console.warn('Non-eclipsing tidal preview unavailable',error);return {regions:[]};}),
+]).then(([module,spec,table,clear])=>{
+  const regions=[...clear.regions.filter(r=>r.preferInOverlap),...spec.regions,
+    ...clear.regions.filter(r=>!r.preferInOverlap)];
+  predictRegional=module.makeRegionalPredictor({regions},table);
+  refreshPreview();
+  for(const region of regions){
+    const title=document.createElement('strong'), limits=document.createElement('p');
+    title.textContent=region.title+' · '+Object.keys(region.models).map(k=>({tides:'tides',heat:'heating',both:'both together'})[k]).join(', ');
+    limits.textContent=Object.entries(region.domain || region.bounds).map(([k,[lo,hi]])=>
+      regionLabels[k]+' '+lo+'–'+hi).join(' · ');
+    if(region.minSeparationRatio) limits.textContent+=' · Heating off. The projected separation bound at periastron must exceed '+region.minSeparationRatio+' times the summed radii.';
+    regionDetails.append(title,limits);
+  }
+  const note=document.createElement('p');
+  note.textContent='With tides on and irradiation off, both built-in reference binaries also support a temperature-ratio sweep from 0.58 to 1.10 at their preset geometry. The broad slider model covers additional detached systems when both stellar atmospheres lie inside the tested table and both radii are within 85% of their periastron Roche lobes. The near-lobe preview covers additional detached systems at 85–99.5% estimated lobe filling, periods of 1.5–12 days, inclinations of at least 8°, and temperature ratios of at least 0.65 when the atmosphere table supports both stars. At the near-Roche example geometry, all four settings also cover eccentricities 0.240–0.276 and temperature ratios 0.99–1.07 together. Release a slider to start PHOEBE at the selected resolution.';
+  regionDetails.append(note);
+  $('parameter-controls').before(regionDetails);
+}).catch(error=>console.warn('Regional surface preview unavailable',error));
 const ranges=GROUPS.flatMap(group=>group.items);
+const inSliderRanges=p=>ranges.every(([k,label,lo,hi])=>Number.isFinite(p[k]) && lo<=p[k] && p[k]<=hi);
 predictDisplay=p=>joint(p) ?? paired(p) ??
-  (!p.distortion && !p.irradiation && ranges.every(([k,label,lo,hi])=>Number.isFinite(p[k]) && lo<=p[k] && p[k]<=hi)
+  (!p.distortion && !p.irradiation && inSliderRanges(p)
     ? exploratory(p) : null);
 const coverage=document.createElement('p');
 coverage.className='muted small';
-coverage.textContent='Start from defaults. A purple drag curve supports inclination, eccentricity (0–0.24) and periastron angle together, or inclination, both radii and temperature ratio on a circular orbit. The amber network previews other eight-slider combinations. Try the 30° non-eclipsing example at inclinations of 18–46° to preview tides and heating. The legend identifies any omitted effects.';
+coverage.textContent='Start from defaults. A purple drag curve supports inclination, eccentricity (0–0.24) and periastron angle together, or inclination, both radii and temperature ratio on a circular orbit. The amber network previews other eight-slider combinations. The amber surface preview includes tides and heating in the tested ranges below and on the original measured slices. The legend identifies any omitted effects.';
 $('parameter-controls').before(coverage);
 document.querySelector('#curve-title + span').textContent='Drag preview · purple tested / amber exploratory';
 const nativeFiles=bindNativeFiles(()=>{

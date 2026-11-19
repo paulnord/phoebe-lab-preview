@@ -67,3 +67,50 @@ export function makeSurfacePredictor(specs, discs) {
     return null;
   };
 }
+
+// Native median-normalized Johnson V curves with only the secondary temperature varied.
+export function makeTemperaturePredictor(sweeps) {
+  const phases=Array.from({length:257},(_,i)=>i/256-.5);
+  return p=>{
+    for(const sweep of sweeps) {
+      if(!Object.entries(sweep.fixed).every(([key,value])=>p[key]===value))continue;
+      const corners=bracket(sweep.ratios,p.temperature_ratio);
+      if(!corners)continue;
+      const model=new Array(256).fill(0);
+      for(const [i,weight] of corners) {
+        for(let j=0;j<model.length;j++)model[j]+=weight*sweep.curves[i][j];
+      }
+      const ordered=[...model].sort((a,b)=>a-b);
+      const median=(ordered[127]+ordered[128])/2;
+      for(let j=0;j<model.length;j++)model[j]/=median;
+      model.push(model[0]);
+      return {phases,model,surfaceMode:'tides',surfaceRegion:'Temperature sweep',preferInOverlap:sweep.preferInOverlap};
+    }
+    return null;
+  };
+}
+
+// Bilinearly interpolate native light curves sampled at this detached geometry.
+export function makeEccentricLobePredictor(spec){
+  const bytes=Uint8Array.from(atob(spec.flux),char=>char.charCodeAt(0));
+  const view=new DataView(bytes.buffer);
+  const values=Float64Array.from({length:bytes.length/4},(_,i)=>view.getFloat32(i*4,true));
+  const phases=Array.from({length:257},(_,j)=>j/256-.5);
+  return p=>{
+    if(!Object.entries(spec.fixed).every(([key,value])=>p[key]===value))return null;
+    const eccentric=bracket(spec.eccentricities,p.eccentricity);
+    const temperature=bracket(spec.temperatures,p.temperature_ratio);
+    if(!eccentric || !temperature)return null;
+    const mode=Number(p.distortion)+2*Number(p.irradiation);
+    const model=Array(256).fill(0);
+    for(const [e,we] of eccentric)for(const [t,wt] of temperature){
+      const offset=((e*spec.temperatures.length+t)*4+mode)*256;
+      for(let j=0;j<model.length;j++)model[j]+=we*wt*values[offset+j];
+    }
+    const sorted=model.slice().sort((a,b)=>a-b),norm=(sorted[127]+sorted[128])/2;
+    for(let j=0;j<model.length;j++)model[j]/=norm;
+    model.push(model[0]);
+    return {phases,model,surfaceMode:['spherical','tides','heating','tides and heating'][mode],
+      surfaceRegion:'Near-lobe eccentricity sweep',exploratory:true};
+  };
+}

@@ -111,6 +111,35 @@ def from_lab(payload):
     return b
 
 
+
+def contact_outline(b):
+    """Side-on outline of the bundle's common equipotential, in units of separation."""
+    envelopes=b.hierarchy.get_envelopes()
+    if len(envelopes)!=1:return None
+    import libphoebe
+    env=envelopes[0]
+    orbit=b.hierarchy.get_parent_of(env)
+    q=float(b.get_value('q',component=orbit,context='component'))
+    pot=float(b.get_value('pot',component=env,context='component'))
+    # Only closed common surfaces have both an exterior boundary and a neck.
+    if not (np.isfinite(q) and q>0 and np.isfinite(pot)):return None
+    critical=libphoebe.roche_critical_potential(q,1.,1.)
+    if not max(critical['L2'],critical['L3'])<pot<=critical['L1']:return None
+    left,right=libphoebe.roche_xrange(q,1.,1.,pot,choice=2)
+    neck=libphoebe.roche_contact_neck_min(np.pi/2,q,1.,pot)['xmin']
+    x=np.sort(np.append((left+right)/2-(right-left)/2*np.cos(np.linspace(0,np.pi,241)),neck))
+    # At y=0 the potential decreases monotonically with |z|. These roots
+    # trace the visible silhouette looking along y, including the neck.
+    lo=np.zeros_like(x);hi=np.full_like(x,2.)
+    for _ in range(36):
+        z=(lo+hi)/2
+        omega=1/np.hypot(x,z)+q*(1/np.hypot(1-x,z)-x)+.5*(1+q)*x*x
+        lo=np.where(omega>pot,z,lo);hi=np.where(omega>pot,hi,z)
+    z=(lo+hi)/2;z[[0,-1]]=0
+    top=np.column_stack((x,z));bottom=np.column_stack((x[::-1],-z[::-1]))
+    return dict(outlines=[np.concatenate((top,bottom)).tolist()],neck=float(neck))
+
+
 class Workspace:
     def __init__(self):
         self.bundle=None
@@ -130,7 +159,7 @@ class Workspace:
             orbits[label]=ops
         computes=[c for c in b.computes if b.get_compute(compute=c).kind=='phoebe']
         return dict(kind='bundle',models=list(b.models),datasets=list(b.datasets),computes=computes,
-                    orbits=orbits,stars=list(b.hierarchy.get_stars()),objects=advanced.kinds(),
+                    orbits=orbits,contact_shape=contact_outline(b),stars=list(b.hierarchy.get_stars()),objects=advanced.kinds(),
                     rv=b.filter(context='dataset',kind='rv').datasets,lc=b.filter(context='dataset',kind='lc').datasets,solvers=list(b.solvers),solutions=list(b.solutions),version=str(b.get_value(qualifier='phoebe_version',check_default=False,check_visible=False)))
 
     def model(self,label):
