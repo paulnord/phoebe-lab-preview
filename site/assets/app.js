@@ -240,7 +240,12 @@ window.addEventListener('pointercancel',releasePointer);
 window.addEventListener('blur',releasePointer);
 
 function toast(text) { $('toast').textContent=text; $('toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').hidden=true,6500); }
-function status(text,kind='ready') { const el=$('model-status'); el.replaceChildren(); const dot=document.createElement('span');dot.className=`status-dot ${kind==='busy'?'loading':kind==='error'?'error':''}`;const label=document.createElement('span');label.textContent=text;el.append(dot,label); }
+function status(text,kind='ready') {
+  const iconClass=kind==='busy'?'solve-orbit':kind==='error'?'status-dot error':'status-dot';
+  const icon=$('model-indicator');
+  if(icon.className!==iconClass)icon.className=iconClass;
+  $('model-status-text').textContent=text;
+}
 function cleanError(error) { return String(error).trim().split('\n').filter(Boolean).slice(-1)[0].replace(/^(ValueError|RuntimeError|PythonError):\s*/,''); }
 function median(values) { const x=[...values].sort((a,b)=>a-b);const i=Math.floor(x.length/2);return x.length%2?x[i]:(x[i-1]+x[i])/2; }
 function wrapPhase(value) { return ((value+.5)%1+1)%1-.5; }
