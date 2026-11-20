@@ -35,6 +35,8 @@ jobs:
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           python tests/browser_smoke.py http://127.0.0.1:8765/
+          node tests/orbit_viewer.mjs
+          python tests/orbit_viewer_browser.py http://127.0.0.1:8765/ --live
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

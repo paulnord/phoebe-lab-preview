@@ -282,3 +282,31 @@
   .fit-card h2 { display: none; }
   .fit-card .fit-actions { margin-top: 0; }
 }
+
+/* Orbit viewer launchers fit inside the existing illustrations. */
+.orbit-launch { display: block; position: relative; align-self: stretch; width: 100%; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; }
+.orbit-launch-label { position: absolute; right: 4px; bottom: 2px; padding: 2px 5px; background: #fffffff0; color: #5143a5; border-radius: 4px; font-size: 10px; font-weight: 650; }
+.orbit-launch:is(:hover,:focus-visible) .orbit-launch-label { background: var(--purple-soft); }
+.solve-orbit-launch { display: block; padding: 0; border: 0; background: transparent; }
+#model-indicator.status-dot .solve-orbit-launch { display: none; }
+
+#orbit-dialog { width: min(740px,calc(100% - 20px)); max-height: min(92vh,900px); padding: 16px; overflow: auto; }
+#orbit-dialog .dialog-heading { margin-bottom: 8px; }
+.orbit-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 15px; }
+.orbit-controls label { font-size: 12px; }
+.orbit-controls select { padding: 5px; border: 1px solid var(--line); background: white; }
+.orbit-controls .button { min-width: 70px; justify-content: center; padding: 7px 12px; }
+.orbit-figure { margin: 10px 0 4px; background: #faf9fe; border: 1px solid #e4dff0; border-radius: 9px; overflow: hidden; }
+#orbit-sky { display: block; width: 100%; height: clamp(150px,32vh,310px); }
+.orbit-figure figcaption { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px 14px; padding: 4px 8px 7px; font-size: 11px; color: var(--muted); }
+.orbit-figure .legend-dot { margin-right: 3px; }
+#orbit-dialog p { margin: 3px 0; line-height: 1.4; }
+.orbit-scrub { display: grid; grid-template-columns: 1fr auto; gap: 3px 6px; align-items: baseline; margin-top: 8px; font-size: 12px; }
+#orbit-phase { grid-column: 1 / -1; --fill: 0%; background-position: center; background-repeat: no-repeat; background-size: 100% 4px; width: 100%; margin: 0; min-height: 24px; accent-color: var(--purple); }
+.orbit-curve h3 { margin: 4px 0 0; font-size: 13px; }
+#orbit-curve { display: block; width: 100%; height: clamp(70px,14vh,120px); }
+@media (max-width: 480px) {
+  #orbit-dialog { padding: 12px; }
+  .orbit-controls { gap: 6px 8px; }
+  .orbit-controls label,.orbit-scrub { font-size: 11px; }
+}

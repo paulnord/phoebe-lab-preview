@@ -6,7 +6,7 @@
   <meta name="description" content="Explore eclipsing binary stars with PHOEBE models calculated in your browser.">
   <title>PHOEBE Lab — Explore binary stars</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='16' r='9' fill='%23e5af5b'/%3E%3Ccircle cx='23' cy='16' r='6' fill='%239a90ec'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./assets/style.css?v=8803eb0bc702c6f0">
+  <link rel="stylesheet" href="./assets/style.css?v=faa53a8146d2a8ad">
 </head>
 <body>
   <header class="topbar">
@@ -18,7 +18,7 @@
   <main class="workspace">
     <aside class="controls-panel" aria-label="Model parameters">
       <div class="model-toolbar">
-        <div class="star-guide"><canvas id="star-shape" role="img" aria-label="Side view of the stars"></canvas><div class="star-captions"><span><i class="legend-dot gold"></i>Primary</span><span><i class="legend-dot lavender"></i>Secondary</span></div><small id="star-view"></small></div>
+        <div class="star-guide"><button class="orbit-launch" type="button" data-open-orbit aria-haspopup="dialog" aria-label="Open animated orbit viewer"><canvas id="star-shape" role="img" aria-label="Side view of the stars"></canvas><span class="orbit-launch-label" aria-hidden="true">View orbit ↗</span></button><div class="star-captions"><span><i class="legend-dot gold"></i>Primary</span><span><i class="legend-dot lavender"></i>Secondary</span></div><small id="star-view"></small></div>
         <div class="panel-heading"><div><span class="eyebrow">THE MODEL</span><h2>A pair of stars</h2></div><div role="group" aria-label="Model edits"><button class="text-button" id="undo-model" type="button" disabled>Undo</button> <button class="text-button" id="redo-model" type="button" disabled>Redo</button> <button class="text-button" id="reset-button" type="button">Reset</button></div></div>
       </div>
       <div id="parameter-controls"></div>
@@ -48,7 +48,7 @@
         <div class="residual-heading"><span>Residuals <span class="muted" id="residual-scale">· observed − model</span></span><span id="residual-summary" class="mono muted">—</span></div>
         <canvas id="residual-curve" aria-label="Observed minus modeled flux versus orbital phase, with halos on preview residuals" role="img"></canvas>
         <div class="plot-axis-label">Orbital phase</div>
-        <div class="computation-strip"><div class="model-status" id="model-status" role="status" aria-live="polite"><span id="model-indicator" class="solve-orbit" aria-hidden="true"><canvas id="solve-sky" width="60" height="36" title="Sky view of the selected orbit · accelerated playback"></canvas></span><span id="model-status-text">Starting the browser engine…</span></div><div class="quality-controls" role="group" aria-label="Model resolution"><button class="quality active" data-quality="preview" aria-pressed="true" type="button">Preview</button><button class="quality" data-quality="refined" aria-pressed="false" type="button">Refined</button></div></div>
+        <div class="computation-strip"><div class="model-status" id="model-status"><span id="model-indicator" class="solve-orbit"><button type="button" class="solve-orbit-launch" data-open-orbit aria-haspopup="dialog" aria-label="Open animated orbit viewer"><canvas id="solve-sky" width="60" height="36" aria-hidden="true"></canvas></button></span><span id="model-status-text" role="status" aria-live="polite">Starting the browser engine…</span></div><div class="quality-controls" role="group" aria-label="Model resolution"><button class="quality active" data-quality="preview" aria-pressed="true" type="button">Preview</button><button class="quality" data-quality="refined" aria-pressed="false" type="button">Refined</button></div></div>
       </section>
 
       <section class="chart-card" id="rv-panel" aria-labelledby="rv-title">
@@ -122,9 +122,30 @@
       <div class="native-actions"><button class="button primary" id="native-save-bundle">Save bundle</button><button class="button subtle" id="native-save-model">Save model</button><button class="text-button" id="native-attach">Attach model…</button></div>
     </div>
   </dialog>
+  <dialog id="orbit-dialog" aria-labelledby="orbit-title">
+    <div class="dialog-heading"><h2 id="orbit-title">Binary orbit</h2><button id="orbit-close" type="button" class="close-dialog" aria-label="Close orbit viewer">×</button></div>
+    <div class="orbit-controls">
+      <label>View <select id="orbit-view"><option value="earth">From Earth</option><option value="above">Above orbit</option></select></label>
+      <button id="orbit-play" class="button primary" type="button">Play</button>
+      <label>Playback <select id="orbit-speed"><option value="16">16 sec/orbit</option><option value="8" selected>8 sec/orbit</option><option value="4">4 sec/orbit</option><option value="2">2 sec/orbit</option></select></label>
+    </div>
+    <figure class="orbit-figure">
+      <canvas id="orbit-sky" role="img" aria-label="Barycentric paths and moving stars in the selected projection"></canvas>
+      <figcaption><span><i class="legend-dot gold"></i>Primary</span><span><i class="legend-dot lavender"></i>Secondary</span><span>■ Center of mass</span></figcaption>
+    </figure>
+    <p id="orbit-inclination" class="small muted"></p>
+    <p class="small muted">Star disks are schematic; tides and heating are not shown in the orbit animation.</p>
+    <div class="orbit-scrub"><label for="orbit-phase">Orbital phase</label><span id="orbit-time" class="mono"></span><input id="orbit-phase" type="range" min="0" max="1" step=".001" value="0"></div>
+    <section class="orbit-curve" aria-labelledby="orbit-curve-title">
+      <h3 id="orbit-curve-title">Model light curve</h3>
+      <p id="orbit-curve-status" class="small muted"></p>
+      <canvas id="orbit-curve" role="img" aria-label="Normalized model flux versus folded phase; dot marks the current orbit phase" hidden></canvas>
+    </section>
+  </dialog>
+
   <dialog id="fit-dialog"><form id="fit-form"><div class="dialog-heading"><div><span class="eyebrow">LOCAL FIT</span><h2>Choose what can move</h2></div><button type="button" class="close-dialog" aria-label="Close fitting dialog">×</button></div><p>Select any of the eight sliders. Choose the number of model phases per trial. Every observation contributes to the fit. The final curve, residuals and CSV use all 513 phases at the selected mesh resolution. More free parameters require more PHOEBE calculations. Tidal fits can take much longer.</p><label for="fit-phases">Model phases per fit trial</label> <select id="fit-phases"><option value="65">65 · fastest</option><option value="129" selected>129 · standard</option><option value="513">513 · full resolution</option></select><div class="fit-options"><label><input type="checkbox" name="fit" value="inclination" checked><span><strong>Inclination</strong><small>Eclipse geometry</small></span></label><label><input type="checkbox" name="fit" value="radius_primary"><span><strong>Primary radius / separation</strong><small>Eclipse width and shape</small></span></label><label><input type="checkbox" name="fit" value="radius_secondary"><span><strong>Secondary radius / separation</strong><small>Eclipse width and depth</small></span></label><label><input type="checkbox" name="fit" value="temperature_ratio" checked><span><strong>Temperature ratio</strong><small>Relative eclipse depths</small></span></label><label><input type="checkbox" name="fit" value="eccentricity"><span><strong>Eccentricity</strong><small>Eclipse spacing and duration</small></span></label><label><input type="checkbox" name="fit" value="omega"><span><strong>Periastron angle</strong><small>Requires an eccentric orbit</small></span></label><label><input type="checkbox" name="fit" value="mass_ratio"><span><strong>Mass ratio</strong><small>Often weakly constrained by photometry</small></span></label><label><input type="checkbox" name="fit" value="period"><span><strong>Orbital period</strong><small>Refolds timestamped observations at each trial</small></span></label></div><p class="small muted">This is a short local optimization using real PHOEBE models. Results depend on the starting values and selected physics. It does not estimate parameter uncertainties or guarantee a unique solution.</p><p id="fit-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button subtle close-dialog">Cancel</button><button type="submit" class="button primary">Run local fit</button></div></form></dialog>
 
   <dialog id="guide-dialog"><div class="dialog-heading"><div><span class="eyebrow">A QUICK START</span><h2>Read an eclipse</h2></div><button type="button" class="close-dialog" aria-label="Close guide">×</button></div><div class="guide-content"><p>As one star passes in front of the other, the total light drops. The two eclipses encode the stars’ relative sizes, temperatures, and orbital geometry.</p><ol><li><strong>Change inclination.</strong> Near 90°, the orbit is edge-on. Lowering it can make the eclipses shallower or remove them.</li><li><strong>Change the radii.</strong> Larger stars generally produce broader eclipses. Radius and inclination can partly mimic one another.</li><li><strong>Change the temperature ratio.</strong> Watch the relative depths of the primary and secondary eclipses.</li><li><strong>Look at the residuals.</strong> A good-looking overlay can still hide a systematic mismatch. The lower panel makes that mismatch visible.</li></ol><p><strong>What is actually running?</strong> PHOEBE’s Python and compiled numerical code run in a WebAssembly worker on your device. Spherical models without heating start at 65 phases and refine to 513. A new tidal calculation starts at five phases and stops at 129 by default. Choose 513 under Surface physics for finer sampling. Preview uses 400 triangles per star and Refined uses 1,500. Spherical models are the starting point. Adding tidal distortion can take minutes; changing several controls queues only the latest model. There is no model-computation server.</p><p class="small muted">This first version explores detached binaries in Johnson V. Photometry alone cannot reliably determine every physical parameter. Use radial velocities and other constraints for a full scientific analysis.</p><p class="small muted">Primary mass: 1.2 solar masses. Primary temperature: 6,300 K. The star illustration is a size guide.</p><p><a href="./source/phoebe-2.5.4.tar.gz">PHOEBE source</a> · <a href="./source/ndpolator-1.3.1.tar.gz">ndpolator source</a> · <a href="./NOTICE.txt">Build and license notes</a> · <a href="https://github.com/paulnord/phoebe-lab-preview" target="_blank" rel="noreferrer">App source</a></p><p><a href="https://phoebe-project.org/" target="_blank" rel="noreferrer">PHOEBE project ↗</a></p></div></dialog>
-  <script type="module" src="./assets/app.js?v=89618244d89748c4"></script>
+  <script type="module" src="./assets/app.js?v=901e035724a7d6a9"></script>
 </body>
 </html>

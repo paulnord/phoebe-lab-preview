@@ -1,3 +1,4 @@
+import {bindOrbitViewer} from './orbit-viewer.mjs?v=09c8588c82368174';
 import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=7586de0015ac6e9e';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
@@ -329,6 +330,19 @@ function renderControls() {
 }
 
 const drawStarGuide=bindStarGuide($('star-shape'),$('star-view'));
+const drawOrbitViewer=bindOrbitViewer(()=>{
+  const parameters=state.parameters;
+  const pack=(curve,label)=>({parameters,curve,label});
+  const partial=exactPartial?.revision===state.revision?exactPartial:null;
+  const completed=state.result?.revision===state.revision &&
+    Object.keys(DEFAULTS).every(k=>state.result.parameters?.[k]===parameters[k])?state.result:null;
+  const timing=timingRevision===state.revision && !liveTiming?.prior?liveTiming:null;
+  if(partial)return pack(partial,'PHOEBE in progress · '+partial.phases.length+' computed phases');
+  if(completed)return pack(completed,'PHOEBE · '+completed.quality+' resolution · '+completed.phases.length+' computed phases');
+  if(dragView)return pack(dragView,previewLabel());
+  if(timing)return pack(timing,timing.label);
+  return pack(null,'No curve for the current settings yet.');
+});
 function updateControlValues() {
   for(const [key,{number,range,digits,min,max}] of parameterInputs) {
     const zoom=zoomOptions[key];
@@ -618,7 +632,7 @@ function drawTimeSeries() {
 }
 
 const drawVelocityPlot=bindVelocityPlot($('rv-panel'));
-function drawPlots() {drawVelocityPlot(state.parameters,state.dataset);drawTimeSeries();drawChart($('light-curve'),false);drawChart($('residual-curve'),true);}
+function drawPlots() {drawVelocityPlot(state.parameters,state.dataset);drawTimeSeries();drawChart($('light-curve'),false);drawChart($('residual-curve'),true);drawOrbitViewer();}
 // Same fractional scale used in the LFHCal signed-log calibration residual plots.
 const residualScale=1e-4;
 function signedLogFraction(fraction){
