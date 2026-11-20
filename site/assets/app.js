@@ -1,7 +1,7 @@
-import {bindStarGuide} from './stellar-shapes.mjs?v=281007d035eff6f5';
+import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=89f61753f820ed2d';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
-import {bindNativeFiles} from './native-files.js?v=306d8a3b3659f1a4';
+import {bindNativeFiles} from './native-files.js?v=a0ee44e226b755aa';
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = {inclination:84.5,radius_primary:.21,radius_secondary:.17,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [
@@ -240,10 +240,12 @@ window.addEventListener('pointercancel',releasePointer);
 window.addEventListener('blur',releasePointer);
 
 function toast(text) { $('toast').textContent=text; $('toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').hidden=true,6500); }
+const showSolveOrbit=bindSolveOrbit($('solve-sky'));
 function status(text,kind='ready') {
   const iconClass=kind==='busy'?'solve-orbit':kind==='error'?'status-dot error':'status-dot';
   const icon=$('model-indicator');
   if(icon.className!==iconClass)icon.className=iconClass;
+  showSolveOrbit(kind==='busy',state.parameters);
   $('model-status-text').textContent=text;
 }
 function cleanError(error) { return String(error).trim().split('\n').filter(Boolean).slice(-1)[0].replace(/^(ValueError|RuntimeError|PythonError):\s*/,''); }

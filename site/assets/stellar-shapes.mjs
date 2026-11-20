@@ -1,3 +1,5 @@
+import {eccentricAnomalyAtPhase} from '../experiment/eccentric-orbit.mjs?v=436129dc9aef5ac1';
+
 // Geometric side view in the orbital plane, perpendicular to the line of centers.
 // Lengths are in units of the semimajor axis. Both lab stars have syncpar=1.
 const pi=Math.PI;
@@ -108,4 +110,82 @@ export function bindStarGuide(canvas,caption){
   }
   new ResizeObserver(()=>paintShape(canvas,shape)).observe(canvas);
   return draw;
+}
+
+// Project the relative separation onto the sky in semimajor-axis units.
+function skyOrbit(p) {
+  const e=p.eccentricity, omega=p.omega*pi/180, inclination=p.inclination*pi/180;
+  const cosW=Math.cos(omega), sinW=Math.sin(omega), cosI=Math.cos(inclination);
+  const minor=Math.sqrt(1-e*e), anomaly=eccentricAnomalyAtPhase(e,p.omega);
+  return phase=>{
+    const E=anomaly(phase);
+    const x=Math.cos(E)-e, y=minor*Math.sin(E);
+    const along=x*sinW+y*cosW;
+    return {x:x*cosW-y*sinW,y:-along*cosI,secondaryInFront:along>=0};
+  };
+}
+
+function makeOrbitPainter(canvas,p) {
+  const w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(devicePixelRatio||1,2);
+  canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+  const ctx=canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  const position=skyOrbit(p), q=p.mass_ratio;
+  const stars=[
+    {factor:-q/(1+q),radius:p.radius_primary,colors:['#fff1bd','#e5b26d','#9b632e']},
+    {factor:1/(1+q),radius:p.radius_secondary,colors:['#eeeaff','#a599e7','#71619c']}
+  ];
+  const sample=Array.from({length:96},(_,i)=>position(i/96));
+  let maxX=0,maxY=0;
+  for(const star of stars)for(const pos of sample){
+    maxX=Math.max(maxX,Math.abs(pos.x*star.factor)+star.radius);
+    maxY=Math.max(maxY,Math.abs(pos.y*star.factor)+star.radius);
+  }
+  const scale=Math.min((w-4)/(2*maxX),(h-4)/(2*maxY));
+  const paths=stars.map(star=>{
+    const path=new Path2D();
+    sample.forEach(({x,y},i)=>{
+      const px=w/2+x*star.factor*scale, py=h/2+y*star.factor*scale;
+      if(i===0)path.moveTo(px,py);else path.lineTo(px,py);
+    });
+    path.closePath();
+    return path;
+  });
+  function drawStar(star,pos){
+    const x=w/2+pos.x*star.factor*scale, y=h/2+pos.y*star.factor*scale, r=star.radius*scale;
+    const fill=ctx.createRadialGradient(x-.3*r,y-.35*r,0,x,y,r);
+    star.colors.forEach((color,i)=>fill.addColorStop(i/2,color));
+    ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,y,r,0,2*pi);ctx.fill();
+  }
+  return phase=>{
+    ctx.clearRect(0,0,w,h);
+    ctx.lineWidth=.75;ctx.strokeStyle='#c6bdd8';
+    for(const path of paths)ctx.stroke(path);
+    const pos=position(phase),front=pos.secondaryInFront?1:0;
+    drawStar(stars[1-front],pos);drawStar(stars[front],pos);
+  };
+}
+
+export function bindSolveOrbit(canvas) {
+  const motion=matchMedia('(prefers-reduced-motion: reduce)');
+  let frame=0,paint=null,key='',start=0;
+  function draw(now){
+    frame=0;
+    if(!paint)return;
+    // A four-second orbit preserves Keplerian timing within each revolution.
+    paint(motion.matches ? .25 : ((now-start)%4000)/4000);
+    if(!motion.matches)frame=requestAnimationFrame(draw);
+  }
+  motion.addEventListener('change',()=>{cancelAnimationFrame(frame);draw(performance.now());});
+  return (busy,p)=>{
+    if(!busy){
+      cancelAnimationFrame(frame);frame=0;paint=null;return;
+    }
+    const next=[p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,devicePixelRatio].join('/');
+    if(!paint || next!==key){
+      if(!paint)start=performance.now();
+      key=next;paint=makeOrbitPainter(canvas,p);
+    }
+    if(!frame)draw(performance.now());
+  };
 }
