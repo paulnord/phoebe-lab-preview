@@ -1,7 +1,7 @@
-import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=89f61753f820ed2d';
+import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=7586de0015ac6e9e';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
-import {bindNativeFiles} from './native-files.js?v=a0ee44e226b755aa';
+import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = {inclination:84.5,radius_primary:.21,radius_secondary:.17,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [

@@ -13,7 +13,7 @@ for(let i=0;i<nodes.length;i++)for(const x of [-nodes[i],nodes[i]])for(let j=0;j
   volumeDirections.push([x,z,weights[i]/8]);
 }
 
-function rocheProfile(q,d,radius) {
+function rocheSurface(q,d,radius) {
   const rotation=(1+q)/2;
   function potential(r,x,z){
     return 1/r+q*(1/Math.sqrt(d*d+r*r-2*d*r*x)-r*x/(d*d))+rotation*r*r*(1-z*z);
@@ -45,9 +45,16 @@ function rocheProfile(q,d,radius) {
     const level=(lo+hi)/2;
     if(meanCube(level)>target)lo=level;else hi=level;
   }
+  const level=(lo+hi)/2;
+  return (x,z)=>surfaceRadius(level,x,z);
+}
+
+function rocheProfile(q,d,radius) {
+  const surface=rocheSurface(q,d,radius);
+  if(!surface)return null;
   return Array.from({length:145},(_,i)=>{
     const theta=2*pi*i/144,x=Math.cos(theta),z=Math.sin(theta);
-    const r=surfaceRadius((lo+hi)/2,x,z);
+    const r=surface(x,z);
     return [r*x,r*z];
   });
 }
@@ -121,8 +128,53 @@ function skyOrbit(p) {
     const E=anomaly(phase);
     const x=Math.cos(E)-e, y=minor*Math.sin(E);
     const along=x*sinW+y*cosW;
-    return {x:x*cosW-y*sinW,y:-along*cosI,secondaryInFront:along>=0};
+    const across=x*cosW-y*sinW, separation=1-e*Math.cos(E);
+    return {x:across,y:-along*cosI,separation,cosLongitude:across/separation,
+      sinLongitude:along/separation,secondaryInFront:along>=0};
   };
+}
+
+
+// Local +x points toward the companion and +z is the orbital pole.
+// Sample the same detached Roche equipotential used by the side-view guide.
+const surfaceDirections=[[1,0,0],[-1,0,0]];
+for(let ring=1;ring<12;ring++){
+  const angle=pi*ring/12;
+  for(let j=0;j<20;j++){
+    const azimuth=2*pi*j/20;
+    surfaceDirections.push([Math.cos(angle),Math.sin(angle)*Math.cos(azimuth),Math.sin(angle)*Math.sin(azimuth)]);
+  }
+}
+
+function tidalRadii(q,r,e){
+  const samples=[];
+  for(let i=0;i<(e?5:1);i++){
+    const d=1-e+2*e*i/4;
+    const surface=rocheSurface(q,d,r);
+    if(!surface)return null;
+    samples.push(surfaceDirections.map(([x,,z])=>surface(x,z)));
+  }
+  return samples;
+}
+
+// The outer boundary of the sky-projected surface samples, in drawing order.
+function silhouette(points){
+  points.sort((a,b)=>a[0]-b[0] || a[1]-b[1]);
+  function half(ordered){
+    const edge=[];
+    for(const point of ordered){
+      while(edge.length>=2){
+        const a=edge[edge.length-2], b=edge[edge.length-1];
+        if((b[0]-a[0])*(point[1]-a[1])>(b[1]-a[1])*(point[0]-a[0]))break;
+        edge.pop();
+      }
+      edge.push(point);
+    }
+    edge.pop();
+    return edge;
+  }
+  const lower=half(points);
+  return lower.concat(half(points.reverse()));
 }
 
 function makeOrbitPainter(canvas,p) {
@@ -135,11 +187,20 @@ function makeOrbitPainter(canvas,p) {
     {factor:-q/(1+q),radius:p.radius_primary,colors:['#fff1bd','#e5b26d','#9b632e']},
     {factor:1/(1+q),radius:p.radius_secondary,colors:['#eeeaff','#a599e7','#71619c']}
   ];
+  const cosI=Math.cos(p.inclination*pi/180),sinI=Math.sin(p.inclination*pi/180),e=p.eccentricity;
+  if(p.distortion){
+    stars[0].surface=tidalRadii(q,stars[0].radius,e);
+    stars[1].surface=tidalRadii(1/q,stars[1].radius,e);
+  }
+  const closed=stars.every(s=>s.surface);
+  canvas.title=p.distortion && !closed?'Detached Roche surface unavailable · showing disk radii':
+    'Sky view of the selected '+(closed?'Roche surfaces':'orbit')+' · accelerated playback';
+  for(const star of stars)star.extent=closed?Math.max(...star.surface.flat()):star.radius;
   const sample=Array.from({length:96},(_,i)=>position(i/96));
   let maxX=0,maxY=0;
   for(const star of stars)for(const pos of sample){
-    maxX=Math.max(maxX,Math.abs(pos.x*star.factor)+star.radius);
-    maxY=Math.max(maxY,Math.abs(pos.y*star.factor)+star.radius);
+    maxX=Math.max(maxX,Math.abs(pos.x*star.factor)+star.extent);
+    maxY=Math.max(maxY,Math.abs(pos.y*star.factor)+star.extent);
   }
   const scale=Math.min((w-4)/(2*maxX),(h-4)/(2*maxY));
   const paths=stars.map(star=>{
@@ -155,7 +216,21 @@ function makeOrbitPainter(canvas,p) {
     const x=w/2+pos.x*star.factor*scale, y=h/2+pos.y*star.factor*scale, r=star.radius*scale;
     const fill=ctx.createRadialGradient(x-.3*r,y-.35*r,0,x,y,r);
     star.colors.forEach((color,i)=>fill.addColorStop(i/2,color));
-    ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,y,r,0,2*pi);ctx.fill();
+    ctx.fillStyle=fill;ctx.beginPath();
+    if(closed){
+      const bin=e?Math.max(0,Math.min(4,(pos.separation-1+e)*2/e)):0;
+      const lo=Math.floor(bin),hi=Math.ceil(bin),t=bin-lo;
+      const sign=star===stars[0]?1:-1;
+      const points=surfaceDirections.map(([u,v,z],i)=>{
+        const size=scale*((1-t)*star.surface[lo][i]+t*star.surface[hi][i]);
+        const dx=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
+        const dy=-sign*(u*pos.sinLongitude+v*pos.cosLongitude)*cosI+z*sinI;
+        return [x+size*dx,y+size*dy];
+      });
+      silhouette(points).forEach(([sx,sy],i)=>i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy));
+      ctx.closePath();
+    }else ctx.arc(x,y,r,0,2*pi);
+    ctx.fill();
   }
   return phase=>{
     ctx.clearRect(0,0,w,h);
@@ -181,7 +256,7 @@ export function bindSolveOrbit(canvas) {
     if(!busy){
       cancelAnimationFrame(frame);frame=0;paint=null;return;
     }
-    const next=[p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,devicePixelRatio].join('/');
+    const next=[p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion,devicePixelRatio].join('/');
     if(!paint || next!==key){
       if(!paint)start=performance.now();
       key=next;paint=makeOrbitPainter(canvas,p);
