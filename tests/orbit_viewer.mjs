@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase} from '../site/assets/orbit-viewer.mjs';
+import {tidalOutline, tidalSurfaceModel} from "../site/assets/stellar-shapes.mjs";
 
 const p={eccentricity:0,omega:90,inclination:90,mass_ratio:.75};
 const compare=(a,b)=>assert.ok(Math.abs(a-b)<1e-11, `${a} != ${b}`);
@@ -47,3 +48,32 @@ compare(fluxAtPhase(current,.5),.8);
 assert.equal(fluxAtPhase(null,0),null);
 assert.equal(fluxAtPhase({phases:[-.1,.1],model:[1,1]},.25),null);
 console.log('PASS: Kepler phase, Earth/above projection, front order, barycenter, periodic flux interpolation');
+
+const tideParams={...p,inclination:85,mass_ratio:.85,radius_primary:.3,radius_secondary:.24,distortion:true};
+const tide=tidalSurfaceModel(tideParams);
+assert.ok(tide);
+assert.strictEqual(tide,tidalSurfaceModel({...tideParams,omega:20,inclination:76}), 'camera changes reuse expensive Roche samples');
+const span=(outline,axis)=>Math.max(...outline.map(v=>v[axis]))-Math.min(...outline.map(v=>v[axis]));
+for(const k of [0,1]){
+  const above=orbitProjection(tideParams,'above');
+  const first=tidalOutline(tide.radii[k],tideParams,above(0),k,'above');
+  const quarter=tidalOutline(tide.radii[k],tideParams,above(.25),k,'above');
+  assert.ok(span(first,1)>span(first,0)+.005, 'elongated along the vertical line of centers at conjunction');
+  assert.ok(span(quarter,0)>span(quarter,1)+.005, 'elongated along the horizontal line of centers at quadrature');
+  compare(span(first,1),span(quarter,0));
+  compare(span(first,0),span(quarter,1));
+  const earth=orbitProjection(tideParams,'earth');
+  const headOn=tidalOutline(tide.radii[k],tideParams,earth(0),k,'earth');
+  const sideOn=tidalOutline(tide.radii[k],tideParams,earth(.25),k,'earth');
+  assert.ok(span(sideOn,0)>span(headOn,0)+.005, 'visible elongation changes in the Earth projection too');
+}
+const oval={...tideParams,eccentricity:.18}, ovalTide=tidalSurfaceModel(oval);
+assert.equal(ovalTide.radii[0].length,5);
+const shapeAt=separation=>tidalOutline(ovalTide.radii[0],oval,
+  {separation,cosLongitude:0,sinLongitude:1},0,'above');
+const a=span(shapeAt(.82),1),b=span(shapeAt(.91),1);
+assert.ok(a>b,'periastron is more distorted');
+compare(span(shapeAt(.865),1),(a+b)/2);
+assert.equal(tidalSurfaceModel({...oval,eccentricity:.35}),null,'overflow does not invent a closed surface');
+assert.equal(tidalSurfaceModel({...oval,distortion:false}),null);
+console.log('PASS: Roche silhouettes turn in both views, eccentric distortion interpolates, invalid surfaces fall back');

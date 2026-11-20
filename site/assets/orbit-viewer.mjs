@@ -1,3 +1,4 @@
+import {tidalOutline,tidalSurfaceModel} from './stellar-shapes.mjs?v=90806d58aeae79bc';
 import {eccentricAnomalyAtPhase} from '../experiment/eccentric-orbit.mjs?v=436129dc9aef5ac1';
 
 export const foldPhase = phase => ((phase + .5) % 1 + 1) % 1 - .5;
@@ -18,7 +19,9 @@ export function orbitProjection(p, view) {
     const along=u*s+v*c, across=u*c-v*s;
     // Rotate the entire overhead frame 180°, preserving orbital direction.
     const [x,y]=view==='above'?[-across,along]:[across,-along*ci];
-    return {stars:factors.map(f=>({x:f*x,y:f*y})),front:Math.abs(si)<1e-9?null:along>=0?1:0};
+    const separation=1-e*Math.cos(E);
+    return {stars:factors.map(f=>({x:f*x,y:f*y})),front:Math.abs(si)<1e-9?null:along>=0?1:0,
+      separation,cosLongitude:across/separation,sinLongitude:along/separation};
   };
 }
 
@@ -44,14 +47,15 @@ function canvasSpace(canvas) {
   return {ctx,w,h};
 }
 
-function orbitPainter(p, view) {
+function orbitPainter(p, view, surface) {
   const position=orbitProjection(p,view), paths=[[],[]], radii=[p.radius_primary,p.radius_secondary];
+  const extents=surface?.extents??radii;
   let extentX=0,extentY=0;
   for(let j=0;j<144;j++){
     position(j/144).stars.forEach((star,k)=>{
       paths[k].push(star);
-      extentX=Math.max(extentX,Math.abs(star.x)+radii[k]);
-      extentY=Math.max(extentY,Math.abs(star.y)+radii[k]);
+      extentX=Math.max(extentX,Math.abs(star.x)+extents[k]);
+      extentY=Math.max(extentY,Math.abs(star.y)+extents[k]);
     });
   }
   return (canvas,phase)=>{
@@ -80,7 +84,13 @@ function orbitPainter(p, view) {
       const fill=ctx.createRadialGradient(cx-r*.23,yy-r*.3,0,cx,yy,r);
       fill.addColorStop(0,k?'#eee8ff':'#fff2bf');fill.addColorStop(1,colors[k]);
       ctx.fillStyle=fill;ctx.strokeStyle=k?'#67569c':'#99612e';ctx.lineWidth=1;
-      ctx.beginPath();ctx.arc(cx,yy,r,0,2*Math.PI);ctx.fill();ctx.stroke();
+      ctx.beginPath();
+      if(surface){
+        tidalOutline(surface.radii[k],p,pos,k,view).forEach(([sx,sy],j)=>
+          j?ctx.lineTo(cx+sx*scale,yy+sy*scale):ctx.moveTo(cx+sx*scale,yy+sy*scale));
+        ctx.closePath();
+      }else ctx.arc(cx,yy,r,0,2*Math.PI);
+      ctx.fill();ctx.stroke();
     }
   };
 }
@@ -124,8 +134,16 @@ export function bindOrbitViewer(readModel) {
   function draw(){
     if(!dialog.open)return;
     const {parameters:p,curve,label}=readModel();
-    const k=[view.value,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary].join('/');
-    if(k!==key){key=k;paint=orbitPainter(p,view.value);}
+    const k=[view.value,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion].join('/');
+    if(k!==key){
+      key=k;
+      const surface=tidalSurfaceModel(p);
+      paint=orbitPainter(p,view.value,surface);
+      id('shape-note').textContent=surface?
+        'Animated detached Roche surfaces. Heating is not shown.' : p.distortion?
+        'Detached Roche surfaces are unavailable for these settings. Showing round disk radii instead.' :
+        'Round disks (tidal distortion off). Heating is not shown.';
+    }
     paint(id('sky'),phase);
     const i=p.inclination.toFixed(1);
     id('inclination').textContent=view.value==='above'?

@@ -33,6 +33,7 @@ with sync_playwright() as pw:
     dialog = page.locator("#orbit-dialog")
     expect(dialog).to_be_visible()
     expect(page.locator("#orbit-play")).to_have_text("Play")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("tidal distortion off")
     original_curve = "preview resolution" if live else "81 computed phases"
     expect(page.locator("#orbit-curve-status")).to_contain_text(original_curve)
     page.locator("#orbit-view").select_option("above")
@@ -64,6 +65,16 @@ with sync_playwright() as pw:
         assert box["y"] >= 0 and box["y"] + box["height"] <= h + 1
     page.locator("#orbit-close").click()
     expect(dialog).to_be_hidden()
+    page.set_viewport_size({"width": 1440, "height": 800})
+    page.locator("#effects summary").click()
+    page.locator("#distortion").check()
+    launcher.click()
+    # Roche geometry is local and available immediately, before the engine's
+    # new tidal light curve is ready; do not wait for that computation.
+    expect(page.locator("#orbit-shape-note")).to_contain_text("Animated detached Roche surfaces")
+    page.locator("#orbit-view").select_option("earth")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("Animated detached Roche surfaces")
+    page.locator("#orbit-close").click()
     assert not errors, errors
     print("PASS: current model curve, launch/focus, reduced motion, scrub and play, no new compute, stale-result rejection, responsive dialog")
     browser.close()

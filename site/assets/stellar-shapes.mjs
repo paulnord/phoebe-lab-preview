@@ -177,6 +177,37 @@ function silhouette(points){
   return lower.concat(half(points.reverse()));
 }
 
+// Cache the expensive Roche solve independently of the camera and orbital phase.
+let tidalKey='', cachedTidalModel=null;
+export function tidalSurfaceModel(p) {
+  if(!p.distortion)return null;
+  const q=p.mass_ratio,e=p.eccentricity;
+  const key=[q,e,p.radius_primary,p.radius_secondary].join('/');
+  if(key!==tidalKey){
+    const radii=[tidalRadii(q,p.radius_primary,e),tidalRadii(1/q,p.radius_secondary,e)];
+    cachedTidalModel=radii.every(Boolean)?{
+      radii,extents:radii.map(samples=>Math.max(...samples.flat()))
+    }:null;
+    tidalKey=key;
+  }
+  return cachedTidalModel;
+}
+
+// Return a silhouette relative to the center of a star, in semimajor-axis units.
+// The local x direction points to its companion; rotate the 3-D lobe before
+// projecting. Above the orbit the sky axes rotate 180° to put Earth below.
+export function tidalOutline(samples,p,pos,star,view) {
+  const e=p.eccentricity,ci=Math.cos(p.inclination*pi/180),si=Math.sin(p.inclination*pi/180);
+  const bin=e?Math.max(0,Math.min(samples.length-1,(pos.separation-1+e)*(samples.length-1)/(2*e))):0;
+  const lo=Math.floor(bin),hi=Math.ceil(bin),t=bin-lo,sign=star===0?1:-1;
+  return silhouette(surfaceDirections.map(([u,v,z],i)=>{
+    const size=(1-t)*samples[lo][i]+t*samples[hi][i];
+    const across=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
+    const along=sign*(u*pos.sinLongitude+v*pos.cosLongitude);
+    return view==='above'?[-size*across,size*along]:[size*across,size*(-along*ci+z*si)];
+  }));
+}
+
 function makeOrbitPainter(canvas,p) {
   const w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(devicePixelRatio||1,2);
   canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
@@ -187,15 +218,10 @@ function makeOrbitPainter(canvas,p) {
     {factor:-q/(1+q),radius:p.radius_primary,colors:['#fff1bd','#e5b26d','#9b632e']},
     {factor:1/(1+q),radius:p.radius_secondary,colors:['#eeeaff','#a599e7','#71619c']}
   ];
-  const cosI=Math.cos(p.inclination*pi/180),sinI=Math.sin(p.inclination*pi/180),e=p.eccentricity;
-  if(p.distortion){
-    stars[0].surface=tidalRadii(q,stars[0].radius,e);
-    stars[1].surface=tidalRadii(1/q,stars[1].radius,e);
-  }
-  const closed=stars.every(s=>s.surface);
-  canvas.title=p.distortion && !closed?'Detached Roche surface unavailable · showing disk radii':
-    'Sky view of the selected '+(closed?'Roche surfaces':'orbit')+' · accelerated playback';
-  for(const star of stars)star.extent=closed?Math.max(...star.surface.flat()):star.radius;
+  const surface=tidalSurfaceModel(p);
+  canvas.title=p.distortion && !surface?'Detached Roche surface unavailable · showing disk radii':
+    'Sky view of the selected '+(surface?'Roche surfaces':'orbit')+' · accelerated playback';
+  stars.forEach((star,k)=>{star.extent=surface?.extents[k]??star.radius;});
   const sample=Array.from({length:96},(_,i)=>position(i/96));
   let maxX=0,maxY=0;
   for(const star of stars)for(const pos of sample){
@@ -217,17 +243,10 @@ function makeOrbitPainter(canvas,p) {
     const fill=ctx.createRadialGradient(x-.3*r,y-.35*r,0,x,y,r);
     star.colors.forEach((color,i)=>fill.addColorStop(i/2,color));
     ctx.fillStyle=fill;ctx.beginPath();
-    if(closed){
-      const bin=e?Math.max(0,Math.min(4,(pos.separation-1+e)*2/e)):0;
-      const lo=Math.floor(bin),hi=Math.ceil(bin),t=bin-lo;
-      const sign=star===stars[0]?1:-1;
-      const points=surfaceDirections.map(([u,v,z],i)=>{
-        const size=scale*((1-t)*star.surface[lo][i]+t*star.surface[hi][i]);
-        const dx=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
-        const dy=-sign*(u*pos.sinLongitude+v*pos.cosLongitude)*cosI+z*sinI;
-        return [x+size*dx,y+size*dy];
-      });
-      silhouette(points).forEach(([sx,sy],i)=>i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy));
+    if(surface){
+      const k=star===stars[0]?0:1;
+      tidalOutline(surface.radii[k],p,pos,k,'earth').forEach(([sx,sy],i)=>
+        i?ctx.lineTo(x+sx*scale,y+sy*scale):ctx.moveTo(x+sx*scale,y+sy*scale));
       ctx.closePath();
     }else ctx.arc(x,y,r,0,2*pi);
     ctx.fill();
