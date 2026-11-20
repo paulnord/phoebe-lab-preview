@@ -1,4 +1,4 @@
-import {paintShape} from './stellar-shapes.mjs?v=89f61753f820ed2d';
+import {paintShape} from './stellar-shapes.mjs?v=7586de0015ac6e9e';
 import {bindAdvanced} from './advanced.js?v=6e6a2f6ebc7d6f09';
 // Native documents have their own PHOEBE worker and never enter the fitting or preview cache.
 export function bindNativeFiles(labSnapshot) {
