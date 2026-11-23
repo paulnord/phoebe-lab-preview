@@ -56,8 +56,8 @@ def test_fit_scope_and_final_grid_are_explicit_in_source():
 
 def test_cross_mode_change_invalidates_exact_outputs_in_ui_source():
     source = (ROOT / "site/assets/app.js").read_text()
-    assert "state.current.contact!==state.parameters.contact" in source
-    assert "requestMatches(current,state.revision,state.parameters.contact)" in source
+    assert "state.current.mode!==modeOf(state.parameters)" in source
+    assert "requestMatches(current,state.revision,modeOf(state.parameters))" in source
     assert "state.revision++;" in source
     assert "$('export-button').disabled=true" in source
     assert "updateStats()" in source

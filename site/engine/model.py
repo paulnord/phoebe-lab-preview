@@ -16,7 +16,8 @@ DEFAULTS = {
     "inclination": 84.5, "radius_primary": 0.21, "radius_secondary": 0.17,
     "temperature_ratio": 0.84, "mass_ratio": 0.75, "eccentricity": 0.0,
     "omega": 90.0, "period": 1.8, "epoch": 0.0,
-    "distortion": False, "irradiation": False, "contact": False,
+    "distortion": False, "irradiation": False, "contact": False, "semidetached": False,
+    "donor": "primary",
     "fillout_factor": 0.25,
 }
 LIMITS = {
@@ -28,6 +29,7 @@ LIMITS = {
 }
 _bundle = None
 _contact_bundle = None
+_semi_bundles = {}
 _last_complete = None
 # The detached branch below is intentionally unchanged.  Keep the verified
 # detached reference fingerprint while contact physics lives in its own branch.
@@ -49,13 +51,19 @@ def parameters(values):
         if not math.isfinite(value) or not limits[0] <= value <= limits[1]:
             raise ValueError(f"{key.replace('_', ' ')} must be between {limits[0]} and {limits[1]}.")
         result[key] = value
-    for key in ("distortion", "irradiation", "contact"):
+    for key in ("distortion", "irradiation", "contact", "semidetached"):
         value = values.get(key, result[key])
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be true or false.")
         result[key] = value
-    if result["contact"] and result["eccentricity"] != 0:
-        raise ValueError("Contact mode currently supports circular orbits only.")
+    donor = values.get("donor", result["donor"])
+    if donor not in ("primary", "secondary"):
+        raise ValueError("Donor must be primary or secondary.")
+    result["donor"] = donor
+    if result["contact"] and result["semidetached"]:
+        raise ValueError("Choose detached, semi-detached, or contact geometry.")
+    if (result["contact"] or result["semidetached"]) and result["eccentricity"] != 0:
+        raise ValueError("Contact and semi-detached modes currently support circular orbits only.")
     return result
 
 
@@ -96,7 +104,7 @@ def observations(dataset, p, *, sort=True):
 
 
 def _physical_flux(p, quality, *, phases=None, ntriangles=None):
-    global _bundle, _contact_bundle
+    global _bundle, _contact_bundle, _semi_bundles
     if p["contact"] and _contact_bundle is None:
         _stage("Building the native contact-envelope system…")
         _contact_bundle = phoebe.default_contact_binary()
@@ -106,7 +114,16 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None):
         _contact_bundle.flip_constraint("fillout_factor@contact_envelope", solve_for="pot@contact_envelope")
         _contact_bundle.add_dataset("lc", compute_phases=np.linspace(-0.5, 0.5, 81),
                                     dataset="observed_lc", passband="Johnson:V")
-    if not p["contact"] and _bundle is None:
+    if p["semidetached"] and p["donor"] not in _semi_bundles:
+        donor = p["donor"]
+        _stage(f"Building the native semi-detached system ({donor} donor)…")
+        semi = phoebe.default_binary(semidetached=donor)
+        semi.flip_constraint("mass@primary", solve_for="sma@binary")
+        semi.set_value("mass", component="primary", value=1.2)
+        semi.add_dataset("lc", compute_phases=np.linspace(-0.5, 0.5, 81),
+                         dataset="observed_lc", passband="Johnson:V")
+        _semi_bundles[donor] = semi
+    if not p["contact"] and not p["semidetached"] and _bundle is None:
         _stage("Building the binary-star system…")
         _bundle = phoebe.default_binary()
         _bundle.flip_constraint("mass@primary", solve_for="sma@binary")
@@ -114,12 +131,16 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None):
         _bundle.add_dataset("lc", compute_phases=np.linspace(-0.5, 0.5, 81),
                             dataset="observed_lc", passband="Johnson:V")
     _stage("Applying the model parameters…")
-    b = _contact_bundle if p["contact"] else _bundle
+    b = _contact_bundle if p["contact"] else _semi_bundles[p["donor"]] if p["semidetached"] else _bundle
     b.set_value("period", component="binary", value=p["period"])
     b.set_value("q", component="binary", value=p["mass_ratio"])
     if p["contact"]:
         b.set_value("fillout_factor", component="contact_envelope", context="component",
                     value=p["fillout_factor"])
+    elif p["semidetached"]:
+        separation = b.get_value("sma", component="binary", context="component")
+        free = "secondary" if p["donor"] == "primary" else "primary"
+        b.set_value("requiv", component=free, context="component", value=p[f"radius_{free}"] * separation)
     else:
         separation = b.get_value("sma", component="binary", context="component")
         b.set_value("requiv", component="primary", value=p["radius_primary"] * separation)
@@ -127,17 +148,17 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None):
     b.set_value("teff", component="primary", value=6300.0)
     b.set_value("teff", component="secondary", value=6300.0 * p["temperature_ratio"])
     b.set_value("incl", component="binary", value=p["inclination"])
-    if not p["contact"]:
+    if not p["contact"] and not p["semidetached"]:
         b.set_value("ecc", component="binary", value=p["eccentricity"])
         b.set_value("per0", component="binary", value=p["omega"])
     b.set_value("irrad_method", value="horvat" if p["irradiation"] else "none")
-    if not p["contact"]:
+    if not p["contact"] and not p["semidetached"]:
         b.set_value_all("distortion_method", value="roche" if p["distortion"] else "sphere")
     refined = quality == "refined"
     if phases is None:
         phases = np.linspace(-0.5, 0.5, 201 if refined else 81)
     b.set_value("compute_phases", dataset="observed_lc", context="dataset", value=phases)
-    default_triangles = 1500 if refined else (800 if p["contact"] else 400)
+    default_triangles = 1500 if refined else (800 if p["contact"] or p["semidetached"] else 400)
     b.set_value_all("ntriangles", value=ntriangles if ntriangles is not None else default_triangles)
     try:
         _stage("Calculating the stellar surfaces and light curve…")
@@ -252,12 +273,12 @@ def progressive_curve(payload, fitted_count=0, initial_flux=None):
     p = parameters(payload.get("parameters", {}))
     quality = "refined" if payload.get("quality") == "refined" else "preview"
     values = tuple(sorted((k, v) for k, v in p.items() if k != "epoch"))
-    surface = p["contact"] or p["distortion"] or p["irradiation"]
+    surface = p["contact"] or p["semidetached"] or p["distortion"] or p["irradiation"]
     plot_count = payload.get("plot_phases", 513)
     if type(plot_count) is not int or plot_count not in (129, 513):
         raise ValueError("Choose 129 or 513 plot phases.")
     stride = 512 // (plot_count - 1)
-    if surface and not p["contact"] and quality == "preview" and not fitted_count:
+    if surface and not p["contact"] and not p["semidetached"] and quality == "preview" and not fitted_count:
         for saved in _surface_references():
             if all(p.get(key) == value for key, value in saved["parameters"].items()):
                 flux = np.asarray(saved["flux"])[::stride]
@@ -342,6 +363,11 @@ def _fit_parameters(payload):
         allowed = {"inclination", "fillout_factor", "temperature_ratio", "mass_ratio", "period"}
         if not set(keys) <= allowed:
             raise ValueError("Contact fits use inclination, fill-out, temperature ratio, mass ratio or period.")
+    if initial["semidetached"]:
+        free_radius = "radius_secondary" if initial["donor"] == "primary" else "radius_primary"
+        allowed = {"inclination", free_radius, "temperature_ratio", "mass_ratio", "period"}
+        if not set(keys) <= allowed:
+            raise ValueError("Semi-detached fits use inclination, the free-star radius, temperature ratio, mass ratio or period.")
     dataset = payload["dataset"]
     _, _, sigma = observations(dataset, initial, sort=False)
     if "period" in keys and dataset.get("x_kind") == "time":
@@ -408,7 +434,7 @@ def _fit_parameters(payload):
         x_scale="jac", max_nfev=12, ftol=2e-4, xtol=1e-8, gtol=2e-4,
     )
     info = {"parameters": keys, "evaluations": evaluations, "objective_phases": len(phases),
-            "objective_triangles": 1500 if quality == "refined" else (800 if initial["contact"] else 400),
+            "objective_triangles": 1500 if quality == "refined" else (800 if initial["contact"] or initial["semidetached"] else 400),
             "converged": bool(result.success), "message": str(result.message)}
     return best["parameters"], info, best["seed"]
 

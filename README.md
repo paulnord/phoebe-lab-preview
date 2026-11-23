@@ -7,7 +7,7 @@ runs **real PHOEBE 2.5.4**, including its compiled C++ extensions, through
 Pyodide/WebAssembly. GitHub Pages serves static files only; no PHOEBE server,
 JupyterHub account, API key, or connection to boole is required.
 
-> **`contact-binary` feature branch:** the standalone lab adds an experimental Contact switch backed by a separately trained native-PHOEBE contact surrogate. It is not deployed from this branch. The companion notebook is [`notebooks/PHOEBE_Contact_Binary_Colab.ipynb`](notebooks/PHOEBE_Contact_Binary_Colab.ipynb); reproducible generation, validation metrics, and limits are in [`experiments/contact/`](experiments/contact/).
+> **Geometry feature branches:** the standalone lab supports geometry-specific Detached, Semi-detached, and Contact previews without deploying from the branch. Semi-detached uses native Roche-lobe donor constraints and a new companion notebook, [`notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb`](notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb). Reproducible generation and validation live under [`experiments/semi_detached/`](experiments/semi_detached/) and [`experiments/contact/`](experiments/contact/).
 
 ## Use the lab
 

@@ -72,3 +72,16 @@ class NativeFileTests(unittest.TestCase):
         self.assertIn('contact_envelope',b.components)
         self.assertEqual(b.get_value('fillout_factor@contact_envelope@component'),.25)
         self.assertEqual(len(w.series('ui_model')[0]['times']),9)
+
+    def test_semi_detached_lab_bundle_preserves_donor_constraint(self):
+        for donor in ('primary','secondary'):
+            w=Workspace()
+            p=dict(model.DEFAULTS,contact=False,semidetached=True,donor=donor,
+                   mass_ratio=.75,inclination=84.5,eccentricity=0.,distortion=False,irradiation=False)
+            phases=np.linspace(-.5,.5,9)
+            data=dict(name='semi photometry',x_kind='phase',y_kind='flux',x=phases.tolist(),y=np.ones(9).tolist(),sigma=None)
+            w.act('lab',dict(parameters=p,quality='preview',dataset=data,phases=phases.tolist()))
+            b=phoebe.open(json.loads(w.act('save_bundle',{})))
+            constrained=b.get_parameter(qualifier='requiv',component=donor,context='constraint')
+            self.assertIn('requiv_max',str(constrained))
+            self.assertEqual(len(w.series('ui_model')[0]['times']),9)

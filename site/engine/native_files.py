@@ -88,7 +88,7 @@ def from_lab(payload):
     # worker may represent an earlier request, so it is never used for export.
     grid=payload.get('phases')
     phases,normalized=model._raw_model(p,quality,phases=None if grid is None else np.asarray(grid,float))
-    source_bundle=model._contact_bundle if p["contact"] else model._bundle
+    source_bundle=model._contact_bundle if p["contact"] else model._semi_bundles[p["donor"]] if p["semidetached"] else model._bundle
     b=phoebe.open(json.loads(serialize(source_bundle)))
     ds='observed_lc'
     physical=np.asarray(b.get_value('fluxes',dataset=ds,model='ui_model'))

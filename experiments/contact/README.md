@@ -28,3 +28,13 @@ node tests/contact_predict.mjs
 - `REPORT.md`: selected hyperparameters, held-out metrics by regime, timings, and limitations
 
 The committed artifact was selected on the documented 128-system training split and evaluated once on the separate 64-system validation split. Re-running generation is intentionally a CPU task and does not require a cluster or paid service.
+
+## Expanded v2 model
+
+`train_contact_v2.py` preserves v1, then trains on 384 systems, selects hyperparameters on 96 independent tune systems, and compares v1/v2 on 128 new untouched test systems plus separate native slider sweeps:
+
+```bash
+PHOEBE_ENABLE_ONLINE_PASSBANDS=FALSE python experiments/contact/train_contact_v2.py all --workers 4
+```
+
+See `REPORT_V2.md`. The standalone app uses v2; the existing contact Colab notebook remains unchanged and embeds v1.

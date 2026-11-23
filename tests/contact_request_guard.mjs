@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import {requestMatches} from '../site/assets/request-guard.mjs';
 
-const detached={revision:7,contact:false};
-assert.equal(requestMatches(detached,7,false),true);
-assert.equal(requestMatches(detached,8,true),false, 'late detached result must not enter contact mode');
-const contact={revision:11,contact:true};
-assert.equal(requestMatches(contact,11,true),true);
-assert.equal(requestMatches(contact,12,false),false, 'late contact result must not enter detached mode');
-assert.equal(requestMatches(contact,11,false),false, 'mode mismatch fails even if a revision were reused');
-console.log(JSON.stringify({status:'PASS',cross_mode_cases:3}));
+for(const mode of ['detached','semi','contact'])assert.equal(requestMatches({revision:7,mode},7,mode),true);
+for(const source of ['detached','semi','contact'])for(const target of ['detached','semi','contact'])if(source!==target)
+  assert.equal(requestMatches({revision:7,mode:source},7,target),false,`late ${source} result must not enter ${target} mode`);
+assert.equal(requestMatches({revision:7,mode:'semi'},8,'semi'),false,'revision mismatch fails within a mode');
+console.log(JSON.stringify({status:'PASS',cross_mode_cases:7}));

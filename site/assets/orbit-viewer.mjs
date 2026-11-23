@@ -134,13 +134,14 @@ export function bindOrbitViewer(readModel) {
   function draw(){
     if(!dialog.open)return;
     const {parameters:p,curve,label}=readModel();
-    const k=[view.value,p.contact,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion].join('/');
+    const k=[view.value,p.contact,p.semidetached,p.donor,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion].join('/');
     if(k!==key){
       key=k;
-      const surface=p.contact?null:tidalSurfaceModel(p);
-      paint=p.contact?(canvas=>{canvas.width=Math.max(1,canvas.clientWidth);canvas.height=Math.max(1,canvas.clientHeight);canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);}):orbitPainter(p,view.value,surface);
+      const constrained=p.contact||p.semidetached,surface=constrained?null:tidalSurfaceModel(p);
+      paint=constrained?(canvas=>{canvas.width=Math.max(1,canvas.clientWidth);canvas.height=Math.max(1,canvas.clientHeight);canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);}):orbitPainter(p,view.value,surface);
       id('shape-note').textContent=p.contact?
-        'Shared contact-envelope geometry is not drawn in this first slice; no detached radii are substituted.' : surface?
+        'Shared contact-envelope geometry is not drawn; no detached radii are substituted.' : p.semidetached?
+        `The ${p.donor} Roche-lobe donor is not drawn in this slice; no detached disks are substituted.` : surface?
         'Animated detached Roche surfaces. Heating is not shown.' : p.distortion?
         'Detached Roche surfaces are unavailable for these settings. Showing round disk radii instead.' :
         'Round disks (tidal distortion off). Heating is not shown.';

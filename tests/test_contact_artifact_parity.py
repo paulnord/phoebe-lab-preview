@@ -9,11 +9,12 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "experiments/contact"))
 from contact_native import BOUNDS  # noqa: E402
-from train_contact import basis  # noqa: E402
+from train_contact_v2 import basis  # noqa: E402
 
 
 MODEL_PATH = ROOT / "site/experiment/contact-model.json"
-DATA_PATH = ROOT / "experiments/contact/artifacts/contact-curves.npz"
+DATA_PATH = ROOT / "experiments/contact/artifacts/contact-curves-v2.npz"
+V1_PATH = ROOT / "experiments/contact/artifacts/contact-model-v1.json"
 
 
 def scaled(parameters, keys):
@@ -42,7 +43,7 @@ def test_frozen_coefficients_reproduce_from_native_targets():
     np.testing.assert_allclose(weights, spec["weights"], rtol=2e-13, atol=2e-13)
 
 
-def test_javascript_and_notebook_use_the_same_frozen_artifact():
+def test_javascript_uses_expanded_frozen_artifact_and_existing_notebook_stays_v1():
     spec = json.loads(MODEL_PATH.read_text())
     parameters = dict(inclination=83.25, mass_ratio=.73, fillout_factor=.27,
                       temperature_ratio=.91, period=1.8, eccentricity=0.,
@@ -62,4 +63,4 @@ def test_javascript_and_notebook_use_the_same_frozen_artifact():
     embedded = next(cell.source for cell in notebook.cells if cell.cell_type == "code" and
                     cell.source.startswith("CONTACT_MODEL = json.loads"))
     notebook_spec = json.loads(embedded.split("r'''", 1)[1].rsplit("'''", 1)[0])
-    assert notebook_spec == spec
+    assert notebook_spec == json.loads(V1_PATH.read_text())
