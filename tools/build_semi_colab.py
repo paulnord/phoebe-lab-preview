@@ -1,10 +1,12 @@
-"""Build the self-contained semi-detached Colab notebook from the frozen model."""
+"""Build the semi-detached training/validation notebook from the frozen model."""
 from pathlib import Path
 import json, nbformat as nbf
 ROOT=Path(__file__).resolve().parents[1];MODEL=json.loads((ROOT/"site/experiment/semi-model.json").read_text())
-nb=nbf.v4.new_notebook();nb["metadata"]={"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"},"language_info":{"name":"python","version":"3"},"colab":{"name":"PHOEBE Semi-Detached Lab.ipynb","provenance":[]}}
+nb=nbf.v4.new_notebook();nb["metadata"]={"kernelspec":{"display_name":"Python 3","language":"python","name":"python3"},"language_info":{"name":"python","version":"3"},"colab":{"name":"PHOEBE Semi-Detached Validation.ipynb","provenance":[]}}
 c=[]
-c.append(nbf.v4.new_markdown_cell("""# PHOEBE Semi-Detached Binary Lab
+c.append(nbf.v4.new_markdown_cell("""# PHOEBE Semi-Detached Preview Validation
+
+This is the reproducibility and validation notebook for the trained semi-detached preview. For observation upload and native fitting, use `PHOEBE_Semi_Detached_Binary_Colab.ipynb`.
 
 Native PHOEBE 2.5.4 is the fitting and export reference. The embedded donor-specific surrogate is display-only and covers circular, synchronous Johnson:V systems with one native Roche-lobe constraint.
 
@@ -95,4 +97,4 @@ c.append(nbf.v4.new_markdown_cell("""## Portability and limits
 - No disk/stream renderer, spots, eccentric semi-detached preview, or joint photometry/RV fitter is included.
 - RV observations can still be inspected alongside the light curve in the standalone app and are scientifically important for mass-ratio constraints.
 """))
-nb["cells"]=c;out=ROOT/"notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb";nbf.write(nb,out);print(out)
+nb["cells"]=c;out=ROOT/"notebooks/PHOEBE_Semi_Detached_Validation.ipynb";nbf.write(nb,out);print(out)

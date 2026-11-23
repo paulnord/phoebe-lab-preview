@@ -15,5 +15,7 @@ Outputs:
 - `artifacts/semi-curves.npz`: parameters, native curves, derived radii, timings, meshes, and split identities
 - `../../site/experiment/semi-model.json`: frozen lightweight browser model
 - `REPORT.md`: pointwise and slider-response validation, timing, provenance, and limits
+- `../../notebooks/PHOEBE_Semi_Detached_Validation.ipynb`: portable validation and recovery checks
+- `../../notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb`: interactive observation upload and native fitting utility
 
 No disks, streams, spots, eccentric semi-detached systems, irradiation preview, or joint photometry/RV inference are trained. Native PHOEBE remains the fitting and export reference.
