@@ -1,4 +1,4 @@
-import {bindOrbitViewer} from './orbit-viewer.mjs?v=geometry1';
+import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=native-surfaces1';
 import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=geometry1';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
@@ -33,6 +33,8 @@ const modeOf=p=>p.contact?'contact':p.semidetached?'semi':'detached';
 const modeSnapshots={detached:{...DEFAULTS},semi:null,contact:null};
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
+let orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null},surfaceRequest=0,surfaceTimer;
+let drawOrbitViewer=()=>{};
 const exactHistory = new Map();
 const modelHistory=[];
 let historyIndex=-1;
@@ -358,9 +360,9 @@ function setGeometryMode(mode) {
 }
 
 const drawStarGuide=bindStarGuide($('star-shape'),$('star-view'));
-const drawOrbitViewer=bindOrbitViewer(()=>{
+drawOrbitViewer=bindOrbitViewer(()=>{
   const parameters=state.parameters;
-  const pack=(curve,label)=>({parameters,curve,label});
+  const pack=(curve,label)=>({parameters,curve,label,surface:orbitSurface});
   const partial=exactPartial?.revision===state.revision?exactPartial:null;
   const completed=state.result?.revision===state.revision &&
     Object.keys(DEFAULTS).every(k=>state.result.parameters?.[k]===parameters[k])?state.result:null;
@@ -370,7 +372,7 @@ const drawOrbitViewer=bindOrbitViewer(()=>{
   if(dragView)return pack(dragView,previewLabel());
   if(timing)return pack(timing,timing.label);
   return pack(null,'No curve for the current settings yet.');
-});
+},()=>scheduleOrbitSurface(0,true));
 function updateControlValues() {
   for(const [key,{number,range,digits,min,max}] of parameterInputs) {
     const zoom=zoomOptions[key];
@@ -468,6 +470,7 @@ function parametersChanged(slider=false,physics=false,key=null) {
     slider ? unavailableReason() : 'Waiting for PHOEBE');
   if(dragView) $('plot-placeholder').hidden=true;
   status('Parameters changed · waiting for PHOEBE','busy');
+  scheduleOrbitSurface();
   drawPlots();updateStats();
   if(!pointerHeld){
     if(!slider && restoreExact()){
@@ -479,6 +482,25 @@ function parametersChanged(slider=false,physics=false,key=null) {
   }
 }
 function scheduleCompute(delay=450) {clearTimeout(computeTimer);computeTimer=setTimeout(()=>requestModel('compute'),delay);}
+
+function scheduleOrbitSurface(delay=350,retry=false) {
+  clearTimeout(surfaceTimer);
+  const key=surfaceGeometryKey(state.parameters);
+  if(!key){orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
+  if(orbitSurface.key!==key){orbitSurface={key,status:'pending',mesh:null,error:null,id:null};drawOrbitViewer();}
+  else if(orbitSurface.status==='ready' || (orbitSurface.status==='pending'&&orbitSurface.id) || (!retry&&orbitSurface.status==='error'))return;
+  else if(retry&&orbitSurface.status==='error')orbitSurface={key,status:'pending',mesh:null,error:null,id:null};
+  surfaceTimer=setTimeout(requestOrbitSurface,delay);
+}
+
+function requestOrbitSurface() {
+  const key=surfaceGeometryKey(state.parameters);
+  if(!key || key!==orbitSurface.key)return;
+  if(!state.ready || state.busy){surfaceTimer=setTimeout(requestOrbitSurface,400);return;}
+  const id=`surface-${++surfaceRequest}`;
+  orbitSurface={key,status:'pending',mesh:null,error:null,id};drawOrbitViewer();
+  state.worker.postMessage({type:'surface',id,payload:{parameters:{...state.parameters},triangles:500}});
+}
 function setBusy(busy,fitting=false) {
   state.busy=busy;state.fitting=fitting;updateHistoryButtons();
   $('fit-button').disabled=!state.ready||busy||state.result?.revision!==state.revision;
@@ -497,23 +519,36 @@ function startEngine() {
   clearDisplay();exactPartial=null;engineFailed=false;
   clearInterval(elapsedTimer);
   if(state.worker)state.worker.terminate();
+  if(orbitSurface.key)orbitSurface={...orbitSurface,status:'pending',mesh:null,error:null,id:null};
   state.ready=false;setBusy(false);state.queued=false;state.current=null;
   refreshPreview();
   $('engine-banner').hidden=false;$('engine-retry').hidden=true;
   $('engine-pill').innerHTML='<span class="status-dot loading"></span>Loading engine';
   status('Starting the browser engine…','busy');
-  state.worker=new Worker(new URL('./engine.worker.js?v=a2151386603b44c9',import.meta.url),{type:'module'});
+  state.worker=new Worker(new URL('./engine.worker.js?v=native-surfaces1',import.meta.url),{type:'module'});
   const worker=state.worker;
   state.worker.onmessage=({data})=>{
     if(worker!==state.worker)return;
     if(data.type==='status') {$('engine-title').textContent=data.title;$('engine-detail').textContent=data.detail;return;}
     if(data.type==='ready') {
       state.ready=true;$('engine-banner').hidden=true;$('engine-pill').innerHTML='<span class="status-dot"></span>Browser engine ready';
-      requestModel('compute');return;
+      requestModel('compute');scheduleOrbitSurface();return;
     }
     if(data.type==='fatal') {
       engineFailed=true;state.ready=false;setBusy(false);$('engine-title').textContent='The scientific engine could not start';$('engine-detail').textContent=cleanError(data.error);$('engine-retry').hidden=false;
       $('engine-pill').innerHTML='<span class="status-dot error"></span>Engine unavailable';status(cleanError(data.error),'error');return;
+    }
+    if(data.type==='surface_result') {
+      if(data.id===orbitSurface.id && surfaceGeometryKey(state.parameters)===orbitSurface.key){
+        orbitSurface={...orbitSurface,status:'ready',mesh:data.value,error:null};drawOrbitViewer();
+      }
+      return;
+    }
+    if(data.type==='surface_error') {
+      if(data.id===orbitSurface.id && surfaceGeometryKey(state.parameters)===orbitSurface.key){
+        orbitSurface={...orbitSurface,status:'error',mesh:null,error:cleanError(data.error)};drawOrbitViewer();
+      }
+      return;
     }
     if(data.id!==state.current?.id)return;
     if(data.type==='fit_parameters') {
@@ -585,6 +620,7 @@ function startEngine() {
         if(data.result.source==='stored_exact')text=`Exact PHOEBE · ${data.result.phases.length} phases · saved reference for these settings`;
         if(data.result.fit) {text=`Local fit complete · ${data.result.fit.objective_phases}-phase search · ${data.result.phases.length}-point curve · ${data.result.fit.evaluations} model evaluations · ${data.result.seconds.toFixed(1)} s`;toast(data.result.fit.converged?'Local fit completed. Inspect the residuals before accepting the model.':'The short fit reached its stopping limit. Inspect the residuals and starting values.');}
         status(text);drawPlots();updateStats();
+        scheduleOrbitSurface();
       }
       if(state.queued) {state.queued=false;requestModel('compute');}
       else if(current.stopped && current.revision===state.revision)status('Refinement stopped · change a parameter to recalculate');
@@ -605,6 +641,7 @@ function startEngine() {
       }
       status(cleanError(data.error),'error');toast(cleanError(data.error));
       if(!state.result){$('plot-placeholder').hidden=true;drawPlots();}
+      scheduleOrbitSurface();
     }
   };
   state.worker.onerror=(e)=>{if(worker!==state.worker)return;engineFailed=true;state.ready=false;status(e.message||'The browser worker stopped.','error');setBusy(false);$('engine-title').textContent='The browser engine stopped';$('engine-detail').textContent=e.message||'Restart the engine to continue.';$('engine-retry').hidden=false;$('engine-banner').hidden=false;};

@@ -22,7 +22,7 @@ export function bindNativeFiles(labSnapshot) {
   }
   function engine() {
     if(loading)return loading;
-    const w=new Worker(new URL('./engine.worker.js?v=a2151386603b44c9',import.meta.url),{type:'module'});
+    const w=new Worker(new URL('./engine.worker.js?v=native-surfaces1',import.meta.url),{type:'module'});
     worker=w;
     loading=new Promise((resolve,reject)=>{
       function failed(message) {

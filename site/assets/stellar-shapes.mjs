@@ -110,7 +110,7 @@ export function bindStarGuide(canvas,caption){
     const key=[p.contact,p.semidetached,p.donor,p.distortion,p.eccentricity,p.mass_ratio,p.radius_primary,p.radius_secondary].join('/');
     if(key!==lastKey){
       lastKey=key;shape=p.contact||p.semidetached?null:detachedShape(p);
-      caption.textContent=p.contact?'Shared contact envelope · curve preview is contact-specific; 3-D envelope viewer pending':p.semidetached?`${p.donor[0].toUpperCase()+p.donor.slice(1)} donor fills its Roche lobe · 3-D donor viewer pending`:shape?(p.distortion?'Roche surfaces':'Spheres')+(p.eccentricity?' · side view at periastron':' · side view'):'Detached surface reaches its Roche limit';
+      caption.textContent=p.contact?'Shared contact envelope · open the orbit viewer for the native connected surface':p.semidetached?`${p.donor[0].toUpperCase()+p.donor.slice(1)} donor fills its Roche lobe · open the orbit viewer for native tidal surfaces`:shape?(p.distortion?'Roche surfaces':'Spheres')+(p.eccentricity?' · side view at periastron':' · side view'):'Detached surface reaches its Roche limit';
       canvas.setAttribute('aria-label',caption.textContent);
     }else return;
     paintShape(canvas,shape);

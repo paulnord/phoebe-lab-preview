@@ -280,7 +280,7 @@ class NativeBackend:
     def __init__(self, phoebe_module=None):
         if phoebe_module is None:
             import phoebe as phoebe_module
-        self.phoebe = phoebe_module; self.bundles = {}
+        self.phoebe = phoebe_module; self.bundles = {}; self.surface_bundles = {}
 
     def _bundle(self, p, phases, triangles):
         geometry = p["geometry"]
@@ -334,6 +334,88 @@ class NativeBackend:
         if not np.isfinite(flux).all() or np.any(flux <= 0):
             raise ValueError("Native PHOEBE did not produce a finite positive curve.")
         return phases, flux / np.median(flux)
+
+    def surface(self, parameters, triangles=500):
+        """Build a native phase-zero co-rotating constrained surface."""
+        p = validate_parameters(parameters); geometry = p["geometry"]
+        if geometry == "detached":
+            raise ValueError("This native surface animator covers semi-detached and contact geometry.")
+        if geometry not in self.surface_bundles:
+            if geometry == "contact":
+                b = self.phoebe.default_contact_binary()
+                b.flip_constraint("mass@primary", solve_for="sma@binary")
+                b.set_value("mass", component="primary", value=1.2)
+                b.flip_constraint("pot@contact_envelope", solve_for="requiv@primary")
+                b.flip_constraint("fillout_factor@contact_envelope", solve_for="pot@contact_envelope")
+            else:
+                b = self.phoebe.default_binary(semidetached=p["donor"])
+                b.flip_constraint("mass@primary", solve_for="sma@binary")
+                b.set_value("mass", component="primary", value=1.2)
+            b.add_dataset("mesh", dataset="fitter_mesh", compute_phases=[0.], columns=["xs","ys","zs"])
+            self.surface_bundles[geometry] = b
+        b = self.surface_bundles[geometry]
+        b.set_value("period", component="binary", value=p["period"])
+        b.set_value("q", component="binary", value=p["mass_ratio"])
+        if geometry == "contact":
+            b.set_value("fillout_factor", component="contact_envelope", context="component", value=p["fillout_factor"])
+        else:
+            free = "secondary" if p["donor"] == "primary" else "primary"
+            maximum = b.get_value("requiv_max", component=free, context="component")
+            b.set_value("requiv", component=free, context="component", value=p["free_fill"] * maximum)
+        b.set_value("teff", component="primary", value=6300.)
+        b.set_value("teff", component="secondary", value=6300.*p["temperature_ratio"])
+        b.set_value("incl", component="binary", value=p["inclination"])
+        actual = int(triangles)
+        while True:
+            b.set_value_all("ntriangles", value=actual)
+            try:
+                b.run_compute(model="fitter_surface", overwrite=True, progressbar=False)
+                break
+            except TypeError as error:
+                if geometry != "contact" or actual >= 1000 or "Mesh failed or incomplete" not in str(error): raise
+                actual = 1000
+        components=[]
+        for star in b.hierarchy.get_stars():
+            values=np.asarray(b.get_value("xyz_elements",component=star,dataset="fitter_mesh",model="fitter_surface"),dtype=float)
+            if values.ndim!=3 or values.shape[1:]!=(3,3) or not np.isfinite(values).all():
+                raise ValueError("PHOEBE returned an incomplete surface mesh.")
+            components.append({"name":star,"triangles":values})
+        result={"schema":1,"source":f"native PHOEBE {self.phoebe.__version__}",
+                "geometry":"contact" if geometry=="contact" else "semi","donor":p["donor"],
+                "frame":"primary_origin" if geometry=="contact" else "component_local",
+                "phase":0.,"triangles_requested":int(triangles),"triangles_actual":actual,
+                "components":components}
+        if geometry=="contact":
+            import libphoebe
+            pot=float(b.get_value("pot",component="contact_envelope",context="component"))
+            result["neck"]=float(libphoebe.roche_contact_neck_min(np.pi/2,p["mass_ratio"],1.,pot)["xmin"])
+        return result
+
+
+def project_surface(mesh, parameters, phase=0., view="earth"):
+    """Project a cached co-rotating native mesh at an arbitrary orbit phase."""
+    p=validate_parameters(parameters); angle=2*np.pi*float(phase)
+    # At phase zero the companion lies along +y in the overhead convention.
+    cosine=-np.sin(angle); sine=np.cos(angle)
+    ci=np.cos(np.radians(p["inclination"]));si=np.sin(np.radians(p["inclination"]))
+    centers=(-p["mass_ratio"]/(1+p["mass_ratio"]),1/(1+p["mass_ratio"]))
+    projected=[]
+    for component,part in enumerate(mesh["components"]):
+        triangles=np.asarray(part["triangles"],dtype=float)
+        if triangles.ndim!=3 or triangles.shape[1:]!=(3,3):raise ValueError("Invalid native surface triangles.")
+        values=triangles.copy()
+        if mesh["frame"]=="primary_origin": values[...,0]-=p["mass_ratio"]/(1+p["mass_ratio"]);sign=1;center=0.
+        else: sign=1 if component==0 else -1;center=centers[component]
+        u,v,z=values[...,0],values[...,1],values[...,2]
+        across=sign*(u*cosine-v*sine);along=sign*(u*sine+v*cosine)
+        if mesh["frame"]=="component_local":
+            center_across=center*cosine;center_along=center*sine
+            across+=center_across;along+=center_along
+        if view=="above": x,y,depth=-across,along,z
+        else: x,y,depth=across,-along*ci+z*si,along*si+z*ci
+        points=np.stack((x,y,depth),axis=-1)
+        for triangle in points: projected.append({"component":component,"points":triangle,"depth":float(triangle[:,2].mean())})
+    return sorted(projected,key=lambda triangle:triangle["depth"])
 
 
 def run_native_compute(backend, observations, parameters, final_phases=513, final_triangles=1500):
@@ -440,11 +522,12 @@ def export_result(result, destination="phoebe_fit_results.zip"):
 
 class BinaryFitterApp:
     """ipywidgets surface. Callback methods are public enough for integration QA."""
-    def __init__(self, models, backend=None, render_plots=True, export_directory="."):
+    def __init__(self, models, backend=None, render_plots=True, export_directory=".", auto_surface=True):
         import ipywidgets as widgets
         self.widgets = widgets; self.models = models; self.backend = backend or NativeBackend()
         self.render_plots = render_plots; self.export_directory = Path(export_directory)
         self.observations = None; self.preview_result = None; self.exact_result = None
+        self.surface_mesh = None; self.surface_key = None; self.auto_surface = auto_surface
         self._suspend = False; self._observers = []; self._mode_snapshots = {}
         self._build_widgets(); self._register_callbacks(); self._update_mode(); self.load_sample()
         self._mode_snapshots["detached"] = self._snapshot_controls()
@@ -480,6 +563,14 @@ class BinaryFitterApp:
         self.native_button = w.Button(description="Compute native curve", button_style="info")
         self.fit_button = w.Button(description="Run bounded native fit", button_style="primary")
         self.export_button = w.Button(description="Export native result", disabled=True)
+        self.surface_build = w.Button(description="Build/rebuild native surface", button_style="info")
+        self.surface_auto = w.Checkbox(value=self.auto_surface, description="Auto-build after constrained shape changes")
+        self.surface_view = w.ToggleButtons(options=[("From Earth","earth"),("Above orbit","above")], value="earth", description="View")
+        self.surface_phase = w.IntSlider(value=0,min=0,max=100,step=1,description="Orbit phase",continuous_update=False)
+        self.surface_play = w.Play(value=0,min=0,max=100,step=1,interval=80,description="Play")
+        self.surface_speed = w.Dropdown(options=[("16 sec/orbit",160),("8 sec/orbit",80),("4 sec/orbit",40),("2 sec/orbit",20)],value=80,description="Playback")
+        self.surface_status = w.HTML(); self.surface_output = w.Output()
+        self.surface_link = w.jslink((self.surface_play,"value"),(self.surface_phase,"value"))
         self.fit_phases = w.Dropdown(options=[("65 (fast)",65),("129 (standard)",129)], value=65, description="Fit phases")
         self.max_evaluations = w.Dropdown(options=[4,8,12], value=8, description="Max evals")
         descriptions = {"inclination":"Inclination", "radius_primary":"Primary radius", "radius_secondary":"Secondary radius",
@@ -490,12 +581,16 @@ class BinaryFitterApp:
         self.status = w.HTML(); self.statistics = w.HTML(); self.plot_output = w.Output(); self.log_output = w.Output(); self.download_output = w.Output()
         self.parameter_box = w.VBox(list(self.controls.values()) + [self.epoch, self.distortion, self.irradiation])
         self.fit_box = w.VBox(list(self.fit_checks.values()))
+        self.surface_box = w.VBox([w.HTML("<h3>Native PHOEBE orbit surface</h3><p>The phase-zero co-rotating mesh is cached and rotated with orbital phase. Contact uses one connected common envelope; semi-detached uses two tidal surfaces.</p>"),
+                                   w.HBox([self.surface_build,self.surface_auto]),w.HBox([self.surface_view,self.surface_speed,self.surface_play]),
+                                   self.surface_phase,self.surface_status,self.surface_output])
         self.root = w.VBox([
             w.HTML("<h2>PHOEBE binary fitting utility</h2><p><b>Trained previews are approximate and kernel-side.</b> Slider updates make a Colab/Jupyter kernel round trip. Native PHOEBE is authoritative for fitting, statistics, and exports.</p>"),
             self.geometry, self.donor, self.parameter_box,
             w.HBox([self.sample_choice,self.sample_button,self.upload]),
             w.HBox([self.preview_button,self.native_button]), self.status,
             self.plot_output, self.statistics,
+            self.surface_box,
             w.HTML("<h3>Bounded native fit</h3><p>Select only identifiable parameters. Photometry alone may not uniquely constrain q; joint RV fitting is not implemented.</p>"),
             self.fit_box, w.HBox([self.fit_phases,self.max_evaluations,self.fit_button]), self.log_output,
             w.HBox([self.export_button]), self.download_output,
@@ -509,16 +604,21 @@ class BinaryFitterApp:
         for widget in self.controls.values(): self._observe(widget, self._parameter_changed)
         self._observe(self.epoch, self._parameter_changed); self._observe(self.distortion, self._parameter_changed); self._observe(self.irradiation, self._parameter_changed)
         self._observe(self.upload, self._upload_changed)
+        self._observe(self.surface_phase, self._surface_phase_changed); self._observe(self.surface_view, self._surface_phase_changed)
+        self._observe(self.surface_speed, self._surface_speed_changed)
         self.sample_button.on_click(self._load_sample_clicked); self.preview_button.on_click(self._preview_clicked)
         self.native_button.on_click(self._native_clicked); self.fit_button.on_click(self._fit_clicked); self.export_button.on_click(self._export_clicked)
+        self.surface_build.on_click(self._surface_build_clicked)
 
     def close(self):
         for widget, handler, name in self._observers:
             widget.unobserve(handler, names=name)
         self._observers.clear()
         for button, handler in ((self.sample_button,self._load_sample_clicked),(self.preview_button,self._preview_clicked),
-                                (self.native_button,self._native_clicked),(self.fit_button,self._fit_clicked),(self.export_button,self._export_clicked)):
+                                (self.native_button,self._native_clicked),(self.fit_button,self._fit_clicked),(self.export_button,self._export_clicked),
+                                (self.surface_build,self._surface_build_clicked)):
             button.on_click(handler, remove=True)
+        self.surface_link.unlink()
         self.root.close()
 
     def parameters(self):
@@ -539,6 +639,7 @@ class BinaryFitterApp:
         self._set_visible("free_fill", semi); self._set_visible("fillout_factor", contact)
         self._set_visible("eccentricity", mode == "detached"); self._set_visible("omega", mode == "detached")
         self.distortion.layout.display = "" if mode == "detached" else "none"
+        self.surface_box.layout.display = "none" if mode == "detached" else ""
         allowed = set(allowed_fit_keys(self.parameters()["geometry"]))
         for key, checkbox in self.fit_checks.items(): checkbox.layout.display = "" if key in allowed else "none"
 
@@ -569,11 +670,71 @@ class BinaryFitterApp:
             snapshot = self._snapshot_controls(); snapshot["controls"].update(eccentricity=0.,omega=90.,period=1.8)
             snapshot.update(distortion=False,irradiation=False)
             self._restore_controls(snapshot)
-        self._update_mode(); self._invalidate_exact("Geometry changed"); self.refresh_preview()
+        self._update_mode(); self._invalidate_exact("Geometry changed"); self.refresh_preview(); self._surface_parameters_changed()
 
     def _parameter_changed(self, change):
         if self._suspend: return
-        self._invalidate_exact(); self.refresh_preview()
+        self._invalidate_exact(); self.refresh_preview(); self._surface_parameters_changed()
+
+    def _surface_geometry_key(self):
+        p=self.parameters();geometry=p["geometry"]
+        if geometry=="detached":return None
+        return (geometry,p["donor"],p["mass_ratio"],p["fillout_factor"] if geometry=="contact" else p["free_fill"])
+
+    def _surface_parameters_changed(self):
+        key=self._surface_geometry_key()
+        if key is None:
+            self.surface_mesh=None;self.surface_key=None;self.surface_status.value="";return
+        if key!=self.surface_key:
+            self.surface_mesh=None;self.surface_key=key
+            self.surface_status.value="<span style='color:#805500'>Native surface is stale.</span>"
+            if self.surface_auto.value:self.build_surface()
+        else:self._draw_surface()
+
+    def _surface_build_clicked(self,button):self.build_surface()
+
+    def build_surface(self):
+        if self.parameters()["geometry"]=="detached":return None
+        if not hasattr(self.backend,"surface"):
+            self.surface_status.value="<span style='color:#a00000'>This backend does not provide native surfaces.</span>";return None
+        self.surface_build.disabled=True;self.surface_status.value="<b>Building native PHOEBE phase-zero surface…</b>"
+        try:
+            mesh=self.backend.surface(self.parameters(),500);key=self._surface_geometry_key()
+            self.surface_mesh=mesh;self.surface_key=key
+            detail="connected common envelope with native neck" if mesh["geometry"]=="contact" else f"two tidal surfaces · {mesh['donor']} donor fills its Roche lobe"
+            self.surface_status.value=f"<b>{mesh['source']}</b> · {detail} · {mesh['triangles_actual']}-triangle mesh target"
+            self._draw_surface();return mesh
+        except Exception as error:
+            self.surface_mesh=None;self.surface_status.value=f"<span style='color:#a00000'><b>Surface error:</b> {error}</span>";return None
+        finally:self.surface_build.disabled=False
+
+    def _surface_speed_changed(self,change):self.surface_play.interval=int(change["new"])
+
+    def _surface_phase_changed(self,change):
+        self._draw_surface()
+        current=self.exact_result or self.preview_result
+        if current is not None:self._draw(current)
+
+    def _draw_surface(self):
+        if not self.render_plots or self.surface_mesh is None:return
+        import matplotlib.pyplot as plt
+        from matplotlib.collections import PolyCollection
+        from IPython.display import display
+        p=self.parameters();phase=self.surface_phase.value/100;view=self.surface_view.value
+        triangles=project_surface(self.surface_mesh,p,phase,view)
+        polygons=[entry["points"][:,:2] for entry in triangles]
+        colors=["#db984b" if entry["component"]==0 else "#8876d0" for entry in triangles]
+        with self.surface_output:
+            self.surface_output.clear_output(wait=True)
+            fig,ax=plt.subplots(figsize=(8.8,4.2));collection=PolyCollection(polygons,facecolors=colors,edgecolors="#5d536f55",linewidths=.25,alpha=.84)
+            ax.add_collection(collection);ax.autoscale_view();ax.set_aspect("equal",adjustable="datalim");ax.margins(.08)
+            ax.scatter([0],[0],marker="s",s=18,color="#5d536f",label="center of mass")
+            if view=="above" and p["inclination"]>1e-9:
+                ax.invert_yaxis()
+                ax.annotate("Toward Earth",xy=(.5,.04),xytext=(.5,.18),xycoords="axes fraction",ha="center",arrowprops={"arrowstyle":"->"})
+            title="Connected native PHOEBE contact envelope · neck visible" if self.surface_mesh["geometry"]=="contact" else f"Native PHOEBE semi-detached surfaces · {p['donor']} donor"
+            ax.set_title(title);ax.set_xlabel("Projected separation");ax.set_ylabel("Projected separation");ax.text(.01,.01,f"phase {phase:.2f}",transform=ax.transAxes)
+            display(fig);plt.close(fig)
 
     def _upload_changed(self, change):
         value = change.get("new", self.upload.value)
@@ -691,18 +852,19 @@ class BinaryFitterApp:
                 fig,(ax,res)=plt.subplots(2,1,figsize=(9,5.3),sharex=True,gridspec_kw={"height_ratios":[3,1]})
                 ax.errorbar(comp["phase"],comp["flux"],yerr=comp["sigma"],fmt=".",alpha=.65,label="observed")
                 ax.plot(result["phases"],curve,label=result["source"]); ax.set_ylabel("Normalized flux"); ax.legend()
+                marker=(self.surface_phase.value/100+.5)%1-.5;ax.axvline(marker,color="#97571a",lw=1,alpha=.7)
                 res.axhline(0,color=".5",lw=.8); res.plot(comp["phase"],comp["residual"],"."); res.set(xlabel="Orbital phase",ylabel="Residual")
             plt.tight_layout(); display(fig); plt.close(fig)
 
 
-def launch_fitter(models, backend=None, render_plots=True, export_directory="."):
+def launch_fitter(models, backend=None, render_plots=True, export_directory=".", auto_surface=True):
     """Idempotent notebook entry point: re-running the cell closes old callbacks."""
     global _PHOEBE_FITTER_APP
     try:
         _PHOEBE_FITTER_APP.close()
     except (NameError, AttributeError):
         pass
-    _PHOEBE_FITTER_APP = BinaryFitterApp(models, backend, render_plots, export_directory)
+    _PHOEBE_FITTER_APP = BinaryFitterApp(models, backend, render_plots, export_directory, auto_surface)
     try:
         from IPython.display import display
         display(_PHOEBE_FITTER_APP.root)

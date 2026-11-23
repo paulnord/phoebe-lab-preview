@@ -26,3 +26,28 @@ def test_semi_fit_scope_and_final_grid_are_explicit():
     source=(ROOT/"site/engine/model.py").read_text()
     assert 'free_radius = "radius_secondary" if initial["donor"] == "primary" else "radius_primary"' in source
     assert "progressive_curve(dict(payload, parameters=best, plot_phases=513)" in source
+
+@pytest.mark.parametrize("donor",["primary","secondary"])
+def test_native_semi_surface_mesh_has_two_lobed_components(donor):
+    m=load_engine();result=m.surface_mesh({"parameters":values(donor),"triangles":300})
+    assert result["source"].startswith("native PHOEBE 2.5.4")
+    assert result["geometry"]=="semi" and result["donor"]==donor
+    assert result["frame"]=="component_local" and len(result["components"])==2
+    for component in result["components"]:
+        triangles=np.asarray(component["triangles"])
+        assert triangles.ndim==3 and triangles.shape[1:]==(3,3) and np.isfinite(triangles).all()
+    donor_index=0 if donor=="primary" else 1
+    x=np.asarray(result["components"][donor_index]["triangles"])[...,0]
+    assert x.max()>abs(x.min()),"native Roche-lobe donor extends toward L1"
+
+def test_native_contact_surface_is_connected_at_neck_and_cached():
+    m=load_engine();p=dict(values("primary"),contact=True,semidetached=False,fillout_factor=.25)
+    result=m.surface_mesh({"parameters":p,"triangles":500})
+    again=m.surface_mesh({"parameters":p,"triangles":500})
+    assert result is again
+    assert result["geometry"]=="contact" and result["frame"]=="primary_origin"
+    neck=result["neck"];parts=[np.asarray(c["triangles"]) for c in result["components"]]
+    assert .2<neck<.8
+    assert parts[0][...,0].max()>=neck-0.06
+    assert parts[1][...,0].min()<=neck+0.06
+    assert parts[0][...,0].max()>=parts[1][...,0].min(),"native common-envelope halves meet without a detached gap"

@@ -7,7 +7,7 @@ runs **real PHOEBE 2.5.4**, including its compiled C++ extensions, through
 Pyodide/WebAssembly. GitHub Pages serves static files only; no PHOEBE server,
 JupyterHub account, API key, or connection to boole is required.
 
-> **Geometry feature branches:** the standalone lab supports geometry-specific Detached, Semi-detached, and Contact previews without deploying from the branch. The interactive [`PHOEBE binary fitting notebook`](notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb) accepts sample or uploaded observations and uses native PHOEBE for authoritative fitting and export. The separate [`semi-detached validation notebook`](notebooks/PHOEBE_Semi_Detached_Validation.ipynb) preserves training-reproducibility checks. Generation and validation live under [`experiments/semi_detached/`](experiments/semi_detached/) and [`experiments/contact/`](experiments/contact/).
+> **Geometry feature branches:** the standalone lab supports geometry-specific Detached, Semi-detached, and Contact previews without deploying from the branch. Its orbit viewer builds a native phase-zero PHOEBE mesh for constrained systems, then animates the cached co-rotating geometry locally; semi-detached mode shows both tidally distorted stars and contact mode shows the connected common envelope and neck. The interactive [`PHOEBE binary fitting notebook`](notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb) accepts sample or uploaded observations, provides the same native surface views, and uses native PHOEBE for authoritative fitting and export. The separate [`semi-detached validation notebook`](notebooks/PHOEBE_Semi_Detached_Validation.ipynb) preserves training-reproducibility checks. Generation and validation live under [`experiments/semi_detached/`](experiments/semi_detached/) and [`experiments/contact/`](experiments/contact/).
 
 ## Use the lab
 
@@ -229,7 +229,9 @@ The progressive browser test times the first exact stage and every subsequent ba
 The model is a detached binary in Johnson V with primary mass 1.2 solar masses,
 primary temperature 6,300 K, a Keplerian orbit, PHOEBE atmosphere/limb-darkening
 defaults, selectable Roche distortion and irradiation. Radii are fractions of
-semimajor axis. The star illustration is a size guide, not an orbital animation.
+semimajor axis. The compact star illustration is a size guide. The separate orbit
+viewer animates detached shapes directly and, for semi-detached/contact modes,
+animates a cached native PHOEBE mesh after the browser engine has built it.
 Open Advanced PHOEBE to work with a native bundle, including contact or semi-detached binaries, spots, third light and radial velocities.
 
 The optional fit uses SciPy bounded least squares and calls real PHOEBE for

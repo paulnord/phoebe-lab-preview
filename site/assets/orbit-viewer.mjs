@@ -3,6 +3,13 @@ import {eccentricAnomalyAtPhase} from '../experiment/eccentric-orbit.mjs?v=43612
 
 export const foldPhase = phase => ((phase + .5) % 1 + 1) % 1 - .5;
 
+export function surfaceGeometryKey(p) {
+  if(!p.contact && !p.semidetached)return null;
+  return JSON.stringify(p.contact?
+    ['contact',p.mass_ratio,p.fillout_factor,p.period]:
+    ['semi',p.donor,p.mass_ratio,p.donor==='primary'?p.radius_secondary:p.radius_primary,p.period]);
+}
+
 // In the overhead frame, the in-plane component toward Earth points down.
 export function overheadEarthDirection(inclination) {
   const y=Math.sin(inclination*Math.PI/180);
@@ -95,6 +102,75 @@ function orbitPainter(p, view, surface) {
   };
 }
 
+export function projectNativeSurface(mesh,p,phase,view) {
+  if(!mesh || mesh.schema!==1 || !Array.isArray(mesh.components) || mesh.components.length!==2)
+    throw Error('Invalid native PHOEBE orbit surface.');
+  if(p.contact && (mesh.geometry!=='contact' || mesh.frame!=='primary_origin' || !Number.isFinite(mesh.neck)))
+    throw Error('A connected native contact envelope is required.');
+  if(p.semidetached && (mesh.geometry!=='semi' || mesh.frame!=='component_local' || mesh.donor!==p.donor))
+    throw Error('The native semi-detached donor surface is stale.');
+  const pos=orbitProjection(p,view)(phase),ci=Math.cos(p.inclination*Math.PI/180),si=Math.sin(p.inclination*Math.PI/180);
+  function point(value,component){
+    let [u,v,z]=value,sign=1,center=null;
+    if(mesh.frame==='primary_origin')u-=p.mass_ratio/(1+p.mass_ratio);
+    else {sign=component===0?1:-1;center=pos.stars[component];}
+    const across=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
+    const along=sign*(u*pos.sinLongitude+v*pos.cosLongitude);
+    const relative=view==='above'?[-across,along,z]:[across,-along*ci+z*si,along*si+z*ci];
+    return center?[center.x+relative[0],center.y+relative[1],relative[2]]:relative;
+  }
+  const triangles=[];
+  mesh.components.forEach((part,component)=>{
+    if(!Array.isArray(part.triangles))throw Error('Native surface triangles are missing.');
+    part.triangles.forEach(triangle=>{
+      if(!Array.isArray(triangle)||triangle.length!==3)return;
+      const points=triangle.map(value=>point(value,component));
+      if(points.flat().every(Number.isFinite))triangles.push({component,points,depth:points.reduce((s,v)=>s+v[2],0)/3});
+    });
+  });
+  return {position:pos,triangles,neck:mesh.neck};
+}
+
+function nativeOrbitPainter(p,view,mesh) {
+  const position=orbitProjection(p,view),paths=[[],[]];
+  let extentX=.7,extentY=.7;
+  for(let j=0;j<72;j++){
+    const phase=j/72,pos=position(phase),projected=projectNativeSurface(mesh,p,phase,view);
+    pos.stars.forEach((star,k)=>paths[k].push(star));
+    for(const {points} of projected.triangles)for(const point of points){extentX=Math.max(extentX,Math.abs(point[0]));extentY=Math.max(extentY,Math.abs(point[1]));}
+  }
+  return (canvas,phase)=>{
+    const box=canvasSpace(canvas);if(!box)return;
+    const {ctx,w,h}=box,arrow=view==='above'?overheadEarthDirection(p.inclination):null;
+    const top=8,bottom=arrow?46:8,cy=(h+top-bottom)/2;
+    const scale=Math.min((w-24)/(2*extentX),(h-top-bottom)/(2*extentY));
+    const px=x=>w/2+x*scale,py=y=>cy+y*scale;
+    paths.forEach((path,k)=>{
+      ctx.strokeStyle=colors[k]+'55';ctx.setLineDash([4,4]);ctx.beginPath();
+      path.forEach(({x,y},j)=>j?ctx.lineTo(px(x),py(y)):ctx.moveTo(px(x),py(y)));
+      ctx.closePath();ctx.stroke();ctx.setLineDash([]);
+    });
+    const projected=projectNativeSurface(mesh,p,phase,view);
+    projected.triangles.sort((a,b)=>a.depth-b.depth);
+    for(const triangle of projected.triangles){
+      const [[x0,y0],[x1,y1],[x2,y2]]=triangle.points;
+      const area=Math.abs((x1-x0)*(y2-y0)-(y1-y0)*(x2-x0));
+      if(area<1e-10)continue;
+      const depthSpread=Math.max(...triangle.points.map(v=>v[2]))-Math.min(...triangle.points.map(v=>v[2]));
+      ctx.globalAlpha=Math.max(.58,Math.min(.94,.78+.5*depthSpread));
+      ctx.fillStyle=colors[triangle.component];ctx.strokeStyle=colors[triangle.component]+'88';ctx.lineWidth=.35;
+      ctx.beginPath();ctx.moveTo(px(x0),py(y0));ctx.lineTo(px(x1),py(y1));ctx.lineTo(px(x2),py(y2));ctx.closePath();ctx.fill();ctx.stroke();
+    }
+    ctx.globalAlpha=1;ctx.fillStyle='#6d6880';ctx.fillRect(w/2-2,cy-2,4,4);
+    if(arrow){
+      ctx.strokeStyle='#3a3c53';ctx.fillStyle='#3a3c53';ctx.lineWidth=1.5;
+      const start=[w/2,h-41],tip=[start[0]+18*arrow.x,start[1]+18*Math.sign(arrow.y)];
+      ctx.beginPath();ctx.moveTo(...start);ctx.lineTo(...tip);ctx.lineTo(tip[0]-5,tip[1]-5);ctx.moveTo(...tip);ctx.lineTo(tip[0]+5,tip[1]-5);ctx.stroke();
+      ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('Toward Earth (in-plane projection)',w/2,h-8);
+    }
+  };
+}
+
 function drawCurve(canvas, curve, phase) {
   const box=canvasSpace(canvas);if(!box)return;
   const {ctx,w,h}=box, left=42,right=w-13,top=7,bottom=h-24;
@@ -125,7 +201,7 @@ function drawCurve(canvas, curve, phase) {
   }
 }
 
-export function bindOrbitViewer(readModel) {
+export function bindOrbitViewer(readModel,ensureSurface=()=>{}) {
   const id=name=>document.getElementById('orbit-'+name);
   const dialog=id('dialog'), speed=id('speed'),scrub=id('phase'),play=id('play'),view=id('view');
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
@@ -133,15 +209,19 @@ export function bindOrbitViewer(readModel) {
   const setPlaying=value=>{playing=value;last=0;play.textContent=value?'Pause':'Play';};
   function draw(){
     if(!dialog.open)return;
-    const {parameters:p,curve,label}=readModel();
-    const k=[view.value,p.contact,p.semidetached,p.donor,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion].join('/');
+    const {parameters:p,curve,label,surface}=readModel();
+    const k=[view.value,p.contact,p.semidetached,p.donor,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion,surface?.key,surface?.status].join('/');
     if(k!==key){
       key=k;
-      const constrained=p.contact||p.semidetached,surface=constrained?null:tidalSurfaceModel(p);
-      paint=constrained?(canvas=>{canvas.width=Math.max(1,canvas.clientWidth);canvas.height=Math.max(1,canvas.clientHeight);canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);}):orbitPainter(p,view.value,surface);
-      id('shape-note').textContent=p.contact?
-        'Shared contact-envelope geometry is not drawn; no detached radii are substituted.' : p.semidetached?
-        `The ${p.donor} Roche-lobe donor is not drawn in this slice; no detached disks are substituted.` : surface?
+      const constrained=p.contact||p.semidetached,detachedSurface=constrained?null:tidalSurfaceModel(p);
+      const nativeMesh=constrained && surface?.status==='ready'?surface.mesh:null;
+      paint=nativeMesh?nativeOrbitPainter(p,view.value,nativeMesh):constrained?(canvas=>{canvas.width=Math.max(1,canvas.clientWidth);canvas.height=Math.max(1,canvas.clientHeight);canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);}):orbitPainter(p,view.value,detachedSurface);
+      const nativeState=surface;
+      id('shape-note').textContent=nativeMesh&&p.contact?
+        'Native PHOEBE connected common-envelope surface; the pinched color boundary marks the neck.' : nativeMesh&&p.semidetached?
+        `Native PHOEBE co-rotating surfaces; the ${p.donor} donor fills its Roche lobe.` : constrained&&nativeState?.status==='error'?
+        `Native PHOEBE surface failed: ${nativeState.error}` : constrained?
+        'Building the native PHOEBE phase-zero surface; no detached substitute is shown.' : detachedSurface?
         'Animated detached Roche surfaces. Heating is not shown.' : p.distortion?
         'Detached Roche surfaces are unavailable for these settings. Showing round disk radii instead.' :
         'Round disks (tidal distortion off). Heating is not shown.';
@@ -171,7 +251,7 @@ export function bindOrbitViewer(readModel) {
     if(value && dialog.open)frame=requestAnimationFrame(tick);
   }
   for(const button of document.querySelectorAll('[data-open-orbit]'))button.addEventListener('click',()=>{
-    launcher=button;phase=0;dialog.showModal();run(!motion.matches);
+    launcher=button;phase=0;ensureSurface();dialog.showModal();run(!motion.matches);
   });
   play.addEventListener('click',()=>run(!playing));
   scrub.addEventListener('input',()=>{phase=Number(scrub.value);run(false);});

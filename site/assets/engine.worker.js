@@ -107,7 +107,7 @@ async function calculateWave({groups, parameters, quality}) {
 let messages = Promise.resolve();
 self.onmessage = ({data}) => { messages = messages.then(()=>handle(data)).catch(error=>{
   releaseHelpers();
-  self.postMessage({type:"error", id:data.id, error:String(error)});
+  self.postMessage({type:data.type==='surface'?'surface_error':"error", id:data.id, error:String(error)});
 }); };
 async function handle(data) {
   if (data.type === "initialize") {
@@ -128,6 +128,11 @@ async function handle(data) {
       return;
     }
     if (data.payload) pyodide.globals.set("_model_payload", JSON.stringify(data.payload));
+    if (data.type === "surface") {
+      const answer=await pyodide.runPythonAsync('json.dumps(model.surface_mesh(json.loads(_model_payload)),allow_nan=False)');
+      self.postMessage({type:'surface_result',id:data.id,value:JSON.parse(answer)});
+      return;
+    }
     if (data.type === 'continue' || (data.progressive && ['compute', 'fit'].includes(data.type))) {
       if (data.type !== 'continue') {
         releaseHelpers();
@@ -173,7 +178,7 @@ json.dumps(_answer, allow_nan=False)
     self.postMessage({ type: "result", id: data.id, operation, result: JSON.parse(text) });
   } catch (error) {
     releaseHelpers(); progressiveId = null;
-    self.postMessage({ type: "error", id: data.id, error: String(error) });
+    self.postMessage({ type: data.type==='surface'?'surface_error':"error", id: data.id, error: String(error) });
   }
   activeId = null;
 }

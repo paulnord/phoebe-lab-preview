@@ -30,6 +30,7 @@ LIMITS = {
 _bundle = None
 _contact_bundle = None
 _semi_bundles = {}
+_orbit_mesh_bundles = {}
 _last_complete = None
 # The detached branch below is intentionally unchanged.  Keep the verified
 # detached reference fingerprint while contact physics lives in its own branch.
@@ -178,6 +179,99 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None):
 def _raw_model(p, quality, *, phases=None, ntriangles=None):
     grid, flux = _physical_flux(p, quality, phases=phases, ntriangles=ntriangles)
     return grid, flux / np.median(flux)
+
+
+def _orbit_surface_bundle(p):
+    """Return a phase-zero native mesh bundle for constrained geometries."""
+    geometry = "contact" if p["contact"] else f"semi_{p['donor']}"
+    if geometry in _orbit_mesh_bundles:
+        return _orbit_mesh_bundles[geometry]
+    if p["contact"]:
+        b = phoebe.default_contact_binary()
+        b.flip_constraint("mass@primary", solve_for="sma@binary")
+        b.set_value("mass", component="primary", value=1.2)
+        b.flip_constraint("pot@contact_envelope", solve_for="requiv@primary")
+        b.flip_constraint("fillout_factor@contact_envelope", solve_for="pot@contact_envelope")
+    else:
+        b = phoebe.default_binary(semidetached=p["donor"])
+        b.flip_constraint("mass@primary", solve_for="sma@binary")
+        b.set_value("mass", component="primary", value=1.2)
+    b.add_dataset("mesh", dataset="orbit_mesh", compute_phases=[0.0],
+                  columns=["xs", "ys", "zs"])
+    _orbit_mesh_bundles[geometry] = b
+    return b
+
+
+@lru_cache(maxsize=8)
+def _cached_orbit_surface(shape_values, requested_triangles):
+    p = dict(DEFAULTS, **dict(shape_values))
+    b = _orbit_surface_bundle(p)
+    b.set_value("period", component="binary", value=p["period"])
+    b.set_value("q", component="binary", value=p["mass_ratio"])
+    if p["contact"]:
+        b.set_value("fillout_factor", component="contact_envelope", context="component",
+                    value=p["fillout_factor"])
+    else:
+        free = "secondary" if p["donor"] == "primary" else "primary"
+        separation = b.get_value("sma", component="binary", context="component")
+        b.set_value("requiv", component=free, context="component",
+                    value=p[f"radius_{free}"] * separation)
+    # The surface shape does not depend on temperature or viewing inclination,
+    # but PHOEBE still requires finite stellar values for the mesh backend.
+    b.set_value("teff", component="primary", value=6300.0)
+    b.set_value("teff", component="secondary", value=6300.0 * p["temperature_ratio"])
+    b.set_value("incl", component="binary", value=p["inclination"])
+    actual = int(requested_triangles)
+    while True:
+        b.set_value_all("ntriangles", value=actual)
+        try:
+            b.run_compute(model="orbit_surface", overwrite=True, progressbar=False)
+            break
+        except TypeError as error:
+            # Coarse contact meshes can split incompletely at the neck. A single
+            # bounded retry retains the native common surface without inventing
+            # detached substitutes.
+            if not p["contact"] or actual >= 1000 or "Mesh failed or incomplete" not in str(error):
+                raise
+            actual = 1000
+    components = []
+    for star in b.hierarchy.get_stars():
+        triangles = np.asarray(b.get_value("xyz_elements", component=star,
+                                           dataset="orbit_mesh", model="orbit_surface"), dtype=float)
+        if triangles.ndim != 3 or triangles.shape[1:] != (3, 3) or not np.isfinite(triangles).all():
+            raise ValueError("PHOEBE returned an incomplete orbit surface mesh.")
+        components.append({"name": star, "triangles": np.round(triangles, 9).tolist()})
+    result = {"schema": 1, "source": f"native PHOEBE {phoebe.__version__}",
+              "geometry": "contact" if p["contact"] else "semi", "donor": p["donor"],
+              "frame": "primary_origin" if p["contact"] else "component_local",
+              "phase": 0.0, "triangles_requested": int(requested_triangles),
+              "triangles_actual": actual, "components": components}
+    if p["contact"]:
+        import libphoebe
+        q = float(p["mass_ratio"])
+        pot = float(b.get_value("pot", component="contact_envelope", context="component"))
+        result["neck"] = float(libphoebe.roche_contact_neck_min(np.pi/2, q, 1.0, pot)["xmin"])
+    return result
+
+
+def surface_mesh(payload):
+    """Build/cache a native phase-zero mesh for orbit animation.
+
+    The returned coordinates are in separation units in PHOEBE's co-rotating
+    frame. Semi-detached component meshes are local to each star; contact mesh
+    halves share the primary-origin common-envelope frame and meet at ``neck``.
+    """
+    p = parameters(payload.get("parameters", {}))
+    if not (p["contact"] or p["semidetached"]):
+        raise ValueError("Native constrained surfaces are available for semi-detached or contact geometry.")
+    requested = payload.get("triangles", 500)
+    if type(requested) is not int or requested not in (300, 500, 800):
+        raise ValueError("Choose 300, 500 or 800 surface triangles.")
+    keys = ["contact", "semidetached", "donor", "mass_ratio", "period",
+            "inclination", "temperature_ratio", "fillout_factor",
+            "radius_primary", "radius_secondary"]
+    values = tuple((key, p[key]) for key in keys)
+    return _cached_orbit_surface(values, requested)
 
 
 def _comparison(phases, flux, dataset, p, fitted_count=0, *, sort=True):

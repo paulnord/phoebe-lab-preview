@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase} from '../site/assets/orbit-viewer.mjs';
+import {orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface} from '../site/assets/orbit-viewer.mjs';
 import {tidalOutline, tidalSurfaceModel} from "../site/assets/stellar-shapes.mjs";
 
 const p={eccentricity:0,omega:90,inclination:90,mass_ratio:.75};
@@ -77,3 +77,32 @@ compare(span(shapeAt(.865),1),(a+b)/2);
 assert.equal(tidalSurfaceModel({...oval,eccentricity:.35}),null,'overflow does not invent a closed surface');
 assert.equal(tidalSurfaceModel({...oval,distortion:false}),null);
 console.log('PASS: Roche silhouettes turn in both views, eccentric distortion interpolates, invalid surfaces fall back');
+
+const semiParams={...p,contact:false,semidetached:true,donor:'primary',period:1.8,
+  radius_primary:.22,radius_secondary:.19,fillout_factor:.25};
+const semiMesh={schema:1,geometry:'semi',donor:'primary',frame:'component_local',components:[
+  {triangles:[[[.45,-.08,0],[.45,.08,0],[-.32,0,.16]]]},
+  {triangles:[[[.18,-.05,0],[.18,.05,0],[-.16,0,.1]]]}
+]};
+assert.equal(surfaceGeometryKey({...semiParams,inclination:70,temperature_ratio:.8}),surfaceGeometryKey({...semiParams,inclination:88,temperature_ratio:1.1}),'camera and temperature reuse co-rotating mesh');
+assert.notEqual(surfaceGeometryKey(semiParams),surfaceGeometryKey({...semiParams,radius_secondary:.2}),'free radius rebuilds semi mesh');
+const semi0=projectNativeSurface(semiMesh,semiParams,0,'above');
+const semiQuarter=projectNativeSurface(semiMesh,semiParams,.25,'above');
+assert.equal(semi0.triangles.length,2);
+const range=(triangle,axis)=>Math.max(...triangle.points.map(v=>v[axis]))-Math.min(...triangle.points.map(v=>v[axis]));
+assert.ok(range(semi0.triangles[0],1)>range(semi0.triangles[0],0),'phase zero line of centers is vertical overhead');
+assert.ok(range(semiQuarter.triangles[0],0)>range(semiQuarter.triangles[0],1),'quarter-phase line of centers is horizontal overhead');
+assert.throws(()=>projectNativeSurface({...semiMesh,donor:'secondary'},semiParams,0,'above'),/stale/);
+
+const contactParams={...semiParams,contact:true,semidetached:false,mass_ratio:1,fillout_factor:.25};
+const contactMesh={schema:1,geometry:'contact',donor:'primary',frame:'primary_origin',neck:.5,components:[
+  {triangles:[[[0,-.2,0],[.5,-.08,.08],[.5,.08,.08]],[[0,-.2,0],[.5,.08,.08],[0,.2,0]]]},
+  {triangles:[[[.5,-.08,.08],[1,-.2,0],[1,.2,0]],[[.5,-.08,.08],[1,.2,0],[.5,.08,.08]]]}
+]};
+const common=projectNativeSurface(contactMesh,contactParams,0,'above');
+assert.equal(common.triangles.length,4);
+const primaryY=common.triangles.filter(t=>t.component===0).flatMap(t=>t.points.map(v=>v[1]));
+const secondaryY=common.triangles.filter(t=>t.component===1).flatMap(t=>t.points.map(v=>v[1]));
+assert.ok(Math.max(...primaryY)>=Math.min(...secondaryY)-1e-12,'contact halves meet at the native neck');
+assert.notEqual(surfaceGeometryKey(contactParams),surfaceGeometryKey({...contactParams,fillout_factor:.3}),'fill-out rebuilds common envelope');
+console.log('PASS: native semi/contact surfaces rotate with phase, donor staleness fails closed, contact neck remains connected');

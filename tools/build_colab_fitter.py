@@ -24,6 +24,7 @@ Use a built-in sample or upload a CSV, adjust the geometry-specific controls, in
 
 - Trained previews are display-only and run in the notebook kernel. Colab/Jupyter widget changes therefore make a kernel round trip; this is not the browser-local JavaScript panel from the standalone app.
 - Only native PHOEBE 2.5.4 results populate final residual statistics or exports. The final native curve always uses 513 phases and 1,500 triangles; the separately displayed fit phase budget applies only to optimizer trials.
+- Semi-detached/contact modes build and cache a native PHOEBE phase-zero mesh. Play, speed, phase, and Earth/overhead controls rotate that existing co-rotating mesh; constrained shape changes rebuild it.
 - Photometry alone may not uniquely identify mass ratio, especially for partial/grazing eclipses. This utility does not perform joint radial-velocity fitting, uncertainty estimation, disks, streams, or spots.
 - Input CSV headers: `phase,flux[,sigma]`, `time,flux[,sigma]`, or magnitude equivalents. Time input uses the period and epoch controls.
 
