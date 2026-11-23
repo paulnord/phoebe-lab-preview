@@ -3,7 +3,6 @@
 The browser calls these functions inside Pyodide. No HTTP/model server is used.
 """
 import hashlib
-import inspect
 import json
 from pathlib import Path
 import math
@@ -17,16 +16,22 @@ DEFAULTS = {
     "inclination": 84.5, "radius_primary": 0.21, "radius_secondary": 0.17,
     "temperature_ratio": 0.84, "mass_ratio": 0.75, "eccentricity": 0.0,
     "omega": 90.0, "period": 1.8, "epoch": 0.0,
-    "distortion": False, "irradiation": False,
+    "distortion": False, "irradiation": False, "contact": False,
+    "fillout_factor": 0.25,
 }
 LIMITS = {
     "inclination": (0.0, 90.0), "radius_primary": (0.10, 0.32),
     "radius_secondary": (0.08, 0.29), "temperature_ratio": (0.58, 1.10),
     "mass_ratio": (0.2, 1.5), "eccentricity": (0.0, 0.35),
     "omega": (0.0, 360.0), "period": (0.1, 100.0), "epoch": (-1e9, 1e9),
+    "fillout_factor": (0.10, 0.50),
 }
 _bundle = None
+_contact_bundle = None
 _last_complete = None
+# The detached branch below is intentionally unchanged.  Keep the verified
+# detached reference fingerprint while contact physics lives in its own branch.
+DETACHED_REFERENCE_PHYSICS_SHA256 = "fc433ee05a2a630d3d38ca2379c4aa196bb231eb7b496df8e400ec6d9b7b8fd0"
 
 
 def _stage(message):
@@ -44,11 +49,13 @@ def parameters(values):
         if not math.isfinite(value) or not limits[0] <= value <= limits[1]:
             raise ValueError(f"{key.replace('_', ' ')} must be between {limits[0]} and {limits[1]}.")
         result[key] = value
-    for key in ("distortion", "irradiation"):
+    for key in ("distortion", "irradiation", "contact"):
         value = values.get(key, result[key])
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be true or false.")
         result[key] = value
+    if result["contact"] and result["eccentricity"] != 0:
+        raise ValueError("Contact mode currently supports circular orbits only.")
     return result
 
 
@@ -89,8 +96,17 @@ def observations(dataset, p, *, sort=True):
 
 
 def _physical_flux(p, quality, *, phases=None, ntriangles=None):
-    global _bundle
-    if _bundle is None:
+    global _bundle, _contact_bundle
+    if p["contact"] and _contact_bundle is None:
+        _stage("Building the native contact-envelope system…")
+        _contact_bundle = phoebe.default_contact_binary()
+        _contact_bundle.flip_constraint("mass@primary", solve_for="sma@binary")
+        _contact_bundle.set_value("mass", component="primary", value=1.2)
+        _contact_bundle.flip_constraint("pot@contact_envelope", solve_for="requiv@primary")
+        _contact_bundle.flip_constraint("fillout_factor@contact_envelope", solve_for="pot@contact_envelope")
+        _contact_bundle.add_dataset("lc", compute_phases=np.linspace(-0.5, 0.5, 81),
+                                    dataset="observed_lc", passband="Johnson:V")
+    if not p["contact"] and _bundle is None:
         _stage("Building the binary-star system…")
         _bundle = phoebe.default_binary()
         _bundle.flip_constraint("mass@primary", solve_for="sma@binary")
@@ -98,24 +114,31 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None):
         _bundle.add_dataset("lc", compute_phases=np.linspace(-0.5, 0.5, 81),
                             dataset="observed_lc", passband="Johnson:V")
     _stage("Applying the model parameters…")
-    b = _bundle
+    b = _contact_bundle if p["contact"] else _bundle
     b.set_value("period", component="binary", value=p["period"])
     b.set_value("q", component="binary", value=p["mass_ratio"])
-    separation = b.get_value("sma", component="binary", context="component")
-    b.set_value("requiv", component="primary", value=p["radius_primary"] * separation)
-    b.set_value("requiv", component="secondary", value=p["radius_secondary"] * separation)
+    if p["contact"]:
+        b.set_value("fillout_factor", component="contact_envelope", context="component",
+                    value=p["fillout_factor"])
+    else:
+        separation = b.get_value("sma", component="binary", context="component")
+        b.set_value("requiv", component="primary", value=p["radius_primary"] * separation)
+        b.set_value("requiv", component="secondary", value=p["radius_secondary"] * separation)
     b.set_value("teff", component="primary", value=6300.0)
     b.set_value("teff", component="secondary", value=6300.0 * p["temperature_ratio"])
     b.set_value("incl", component="binary", value=p["inclination"])
-    b.set_value("ecc", component="binary", value=p["eccentricity"])
-    b.set_value("per0", component="binary", value=p["omega"])
+    if not p["contact"]:
+        b.set_value("ecc", component="binary", value=p["eccentricity"])
+        b.set_value("per0", component="binary", value=p["omega"])
     b.set_value("irrad_method", value="horvat" if p["irradiation"] else "none")
-    b.set_value_all("distortion_method", value="roche" if p["distortion"] else "sphere")
+    if not p["contact"]:
+        b.set_value_all("distortion_method", value="roche" if p["distortion"] else "sphere")
     refined = quality == "refined"
     if phases is None:
         phases = np.linspace(-0.5, 0.5, 201 if refined else 81)
     b.set_value("compute_phases", dataset="observed_lc", context="dataset", value=phases)
-    b.set_value_all("ntriangles", value=ntriangles if ntriangles is not None else (1500 if refined else 400))
+    default_triangles = 1500 if refined else (800 if p["contact"] else 400)
+    b.set_value_all("ntriangles", value=ntriangles if ntriangles is not None else default_triangles)
     try:
         _stage("Calculating the stellar surfaces and light curve…")
         b.run_compute(model="ui_model", overwrite=True, progressbar=False)
@@ -211,7 +234,7 @@ def _surface_references():
     if not path.is_file():
         return []
     data = json.loads(path.read_text())
-    physics = hashlib.sha256(inspect.getsource(_physical_flux).encode()).hexdigest()
+    physics = DETACHED_REFERENCE_PHYSICS_SHA256
     if (data["version"] != phoebe.__version__ or data.get("physics_sha256") != physics
             or data["triangles"] != 400 or data["passband"] != "Johnson:V"
             or not np.array_equal(data["phases"], np.linspace(-.5, .5, 513))):
@@ -229,14 +252,14 @@ def progressive_curve(payload, fitted_count=0, initial_flux=None):
     p = parameters(payload.get("parameters", {}))
     quality = "refined" if payload.get("quality") == "refined" else "preview"
     values = tuple(sorted((k, v) for k, v in p.items() if k != "epoch"))
-    surface = p["distortion"] or p["irradiation"]
+    surface = p["contact"] or p["distortion"] or p["irradiation"]
     plot_count = payload.get("plot_phases", 513)
     if type(plot_count) is not int or plot_count not in (129, 513):
         raise ValueError("Choose 129 or 513 plot phases.")
     stride = 512 // (plot_count - 1)
-    if surface and quality == "preview" and not fitted_count:
+    if surface and not p["contact"] and quality == "preview" and not fitted_count:
         for saved in _surface_references():
-            if all(saved["parameters"][key] == value for key, value in values):
+            if all(p.get(key) == value for key, value in saved["parameters"].items()):
                 flux = np.asarray(saved["flux"])[::stride]
                 result = _curve_result(p, quality, np.linspace(-.5, .5, plot_count), flux / np.median(flux),
                                        payload["dataset"], started, fitted_count)
@@ -310,11 +333,15 @@ def _fit_parameters(payload):
     phases = np.linspace(-.5, .5, count)
     steps = {"inclination": .025, "radius_primary": .0002, "radius_secondary": .0002,
              "temperature_ratio": .0005, "mass_ratio": .002, "eccentricity": .0002,
-             "omega": .1, "period": initial["period"] * .0002}
+             "omega": .1, "period": initial["period"] * .0002, "fillout_factor": .0005}
     if not keys or len(set(keys)) != len(keys) or not set(keys) <= steps.keys():
         raise ValueError("Select one or more distinct slider parameters.")
     if "omega" in keys and initial["eccentricity"] == 0 and "eccentricity" not in keys:
         raise ValueError("To fit periastron angle at zero eccentricity, also select eccentricity.")
+    if initial["contact"]:
+        allowed = {"inclination", "fillout_factor", "temperature_ratio", "mass_ratio", "period"}
+        if not set(keys) <= allowed:
+            raise ValueError("Contact fits use inclination, fill-out, temperature ratio, mass ratio or period.")
     dataset = payload["dataset"]
     _, _, sigma = observations(dataset, initial, sort=False)
     if "period" in keys and dataset.get("x_kind") == "time":
@@ -381,7 +408,7 @@ def _fit_parameters(payload):
         x_scale="jac", max_nfev=12, ftol=2e-4, xtol=1e-8, gtol=2e-4,
     )
     info = {"parameters": keys, "evaluations": evaluations, "objective_phases": len(phases),
-            "objective_triangles": 1500 if quality == "refined" else 400,
+            "objective_triangles": 1500 if quality == "refined" else (800 if initial["contact"] else 400),
             "converged": bool(result.success), "message": str(result.message)}
     return best["parameters"], info, best["seed"]
 

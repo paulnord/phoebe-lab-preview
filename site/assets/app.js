@@ -1,10 +1,11 @@
-import {bindOrbitViewer} from './orbit-viewer.mjs?v=53dfa32d2050a061';
-import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=90806d58aeae79bc';
+import {bindOrbitViewer} from './orbit-viewer.mjs?v=contact1';
+import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=contact1';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
 import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
+import {requestMatches} from './request-guard.mjs?v=contact1';
 const $ = (id) => document.getElementById(id);
-const DEFAULTS = {inclination:84.5,radius_primary:.21,radius_secondary:.17,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
+const DEFAULTS = {contact:false,inclination:84.5,radius_primary:.21,radius_secondary:.17,fillout_factor:.25,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [
   {name:'Orbit',items:[
     ['inclination','Inclination',0,90,.1,1,'°','0° is face-on. At 90° the orbit is edge-on.'],
@@ -14,6 +15,7 @@ const GROUPS = [
   {name:'The stars',items:[
     ['radius_primary','Primary radius / separation',.10,.32,.002,3,'','Larger stars generally make broader eclipses.'],
     ['radius_secondary','Secondary radius / separation',.08,.29,.002,3,'','Compare the eclipse widths and depths.'],
+    ['fillout_factor','Contact fill-out factor',.10,.50,.005,3,'','Sets the shared Roche-envelope potential in contact mode.'],
     ['temperature_ratio','Temperature ratio T₂ / T₁',.58,1.10,.005,3,'','Watch the relative depths of the two eclipses.'],
     ['mass_ratio','Mass ratio M₂ / M₁',.2,1.5,.01,2,'','At fixed fractional radii, changing mass ratio mainly shifts surface gravity in the spherical preview.'],
   ]},
@@ -26,7 +28,8 @@ const state = {parameters:{...DEFAULTS},quality:'preview',dataset:null,result:nu
 let computeTimer,toastTimer,parsedFile,exampleRequest=0;
 const parameterInputs = new Map();
 let predictEccentricSweep = null, eccentricSweepSpec = null;
-let predictNear = null, nearRocheReference = null, predictBroad = null, predictTemperature = null, predictSurface = null, predictRegional = null, predictDisplay = null, dragView = null, pointerHeld = false;
+let predictNear = null, nearRocheReference = null, predictBroad = null, predictTemperature = null, predictSurface = null, predictRegional = null, predictDisplay = null, predictContact = null, dragView = null, pointerHeld = false;
+let detachedParameters={...DEFAULTS};
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
 const exactHistory = new Map();
@@ -70,7 +73,7 @@ try {
   for(const key of Object.keys(plotSettings)) if(typeof saved?.[key]==='boolean')plotSettings[key]=saved[key];
 } catch { /* Use default visibility when browser storage is unavailable. */ }
 
-const plotPhases=()=>state.parameters.distortion ? Number($('tidal-phases').value) : 513;
+const plotPhases=()=>state.parameters.distortion || state.parameters.contact ? Number($('tidal-phases').value) : 513;
 const geometryKey=()=>JSON.stringify([state.quality,plotPhases(),...Object.keys(DEFAULTS).map(k=>state.parameters[k])]);
 
 function rememberExact(result) {
@@ -130,12 +133,12 @@ function clearDisplay() {
 }
 
 function clearUnheated(p) {
-  return p.irradiation === false && inSliderRanges(p) && detachedWithin(p,{}) &&
+  return !p.contact && p.irradiation === false && inSliderRanges(p) && detachedWithin(p,{}) &&
     clearSeparation(p,p.distortion ? 1.2 : 1);
 }
 
 function nearTidalLimit(p) {
-  return p.distortion && !detachedWithin(p,{},.85);
+  return !p.contact && p.distortion && !detachedWithin(p,{},.85);
 }
 function secondaryOverflows(p) {
   const spec=eccentricSweepSpec;
@@ -147,6 +150,11 @@ function nearLimitLabel(p) {
 }
 function approximateView() {
   const p=state.parameters;
+  if(p.contact){
+    if(!state.dataset || !predictContact)return null;
+    const curve=predictContact({...p,epoch:0});
+    return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),exploratory:true,omitted:[]} : null;
+  }
   const omitted=[p.distortion && 'tides',p.irradiation && 'heating'].filter(Boolean);
   if (!state.dataset || !predictDisplay || secondaryOverflows(p)) return null;
   if(nearRocheReference && Object.entries(nearRocheReference.parameters).every(([key,value])=>p[key]===value)){
@@ -294,7 +302,7 @@ function renderControls() {
     const heading=document.createElement('h3');heading.textContent=group.name;section.append(heading);
     if(group.name==='Timing') { section.classList.add('timing-group');heading.title='Timing values are in days.'; }
     for(const [key,label,min,max,step,digits,unit,help] of group.items) {
-      const row=document.createElement('div');row.className='parameter';
+      const row=document.createElement('div');row.className='parameter';row.dataset.parameter=key;
       const top=document.createElement('div');top.className='parameter-label';
       const title=document.createElement('label');title.htmlFor=`number-${key}`;title.textContent=label;
       const box=document.createElement('span');box.className='value-box';
@@ -326,7 +334,21 @@ function renderControls() {
     $('parameter-controls').append(section);
   }
   for(const key of ['distortion','irradiation']) $(key).addEventListener('change',()=>{state.parameters[key]=$(key).checked;drawStarGuide(state.parameters);parametersChanged(false,true);});
+  $('contact').addEventListener('change',()=>setContactMode($('contact').checked));
   updateControlValues();
+}
+
+function setContactMode(enabled) {
+  if(enabled===state.parameters.contact)return;
+  if(enabled){
+    detachedParameters={...state.parameters,contact:false};
+    state.parameters={...state.parameters,contact:true,fillout_factor:.25,eccentricity:0,omega:90,period:1.8,distortion:false,irradiation:false};
+  }else{
+    state.parameters={...detachedParameters,contact:false};
+  }
+  Object.keys(zoomOptions).forEach(centerSlider);
+  updateControlValues();
+  parametersChanged(false,true,'contact');
 }
 
 const drawStarGuide=bindStarGuide($('star-shape'),$('star-view'));
@@ -361,11 +383,22 @@ function updateControlValues() {
       ? Math.round((value-zoomCenters[key])*10**zoom.digits) : value;
     range.style.setProperty('--fill',100*(Number(range.value)-Number(range.min))/(Number(range.max)-Number(range.min))+'%');
   }
-  $('distortion').checked=state.parameters.distortion;$('irradiation').checked=state.parameters.irradiation;
+  const contact=!!state.parameters.contact;
+  $('contact').checked=contact;$('distortion').checked=state.parameters.distortion;$('irradiation').checked=state.parameters.irradiation;
+  $('distortion').disabled=contact || state.fitting;
+  for(const key of ['radius_primary','radius_secondary','eccentricity','omega']) document.querySelector(`[data-parameter="${key}"]`).hidden=contact;
+  document.querySelector('[data-parameter="fillout_factor"]').hidden=!contact;
+  document.querySelectorAll('[data-detached-fit]').forEach(el=>el.hidden=contact);
+  document.querySelectorAll('[data-contact-fit]').forEach(el=>el.hidden=!contact);
+  $('fit-scope').textContent=contact
+    ? 'Contact fits use inclination, shared fill-out factor, temperature ratio and mass ratio. Each trial uses the selected phase budget; the final curve, residuals and CSV are recomputed natively at 513 phases.'
+    : 'Choose detached model parameters and a phase budget for each trial. Every observation contributes; the final curve, residuals and CSV are recomputed natively at 513 phases.';
+  $('example-button').disabled=contact || state.fitting;
   drawStarGuide(state.parameters);
 }
 
 function previewLabel() {
+  if(state.parameters.contact)return 'Experimental contact surrogate · native validation required';
   if (dragView.savedPreview) return 'Saved PHOEBE preview · '+dragView.surfaceMode+' · 256 phases';
   if (dragView.flatSphere) return 'Spherical preview · no heating or eclipses';
   return dragView?.surfaceMode ? 'Approximate surface preview · '+dragView.surfaceMode+(dragView.surfaceRegion?' · '+dragView.surfaceRegion:'')+(state.quality==='refined'?' · preview model':'') : dragView?.omitted?.length
@@ -391,6 +424,7 @@ function refreshPreview() {
 }
 
 function unavailableReason() {
+  if(state.parameters.contact)return 'Contact preview unavailable outside its validated domain · release for native PHOEBE';
   if (state.quality!=='preview') return 'Drag preview unavailable · choose Preview quality';
   if (artifact.pairs && (state.parameters.eccentricity!==0 || state.parameters.omega!==90))
     return 'Drag preview unavailable for this combination · release for PHOEBE';
@@ -406,7 +440,7 @@ function parametersChanged(slider=false,physics=false,key=null) {
   previousReference=latestFit||latestCompleted;
   $('preview-agreement').hidden=true;
   const interrupt=physics && state.current?.type==='compute' &&
-    ((state.current.tides && !state.parameters.distortion) || (state.current.heating && !state.parameters.irradiation));
+    (state.current.contact!==state.parameters.contact || (state.current.tides && !state.parameters.distortion) || (state.current.heating && !state.parameters.irradiation));
   if(interrupt)startEngine();
   exactPartial=null;
   state.revision++;
@@ -439,9 +473,9 @@ function setBusy(busy,fitting=false) {
   $('tidal-phases').disabled=fitting;
   $('surface-workers').disabled=fitting;Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
   $('example-choice').disabled=fitting;
-  $('import-button').disabled=fitting;$('example-button').disabled=fitting;$('reset-button').disabled=fitting;
+  $('import-button').disabled=fitting;$('example-button').disabled=fitting || state.parameters.contact;$('reset-button').disabled=fitting;
   for(const {number,range} of parameterInputs.values()) {number.disabled=fitting;if(range)range.disabled=fitting;}
-  $('distortion').disabled=fitting;$('irradiation').disabled=fitting;
+  $('contact').disabled=fitting;$('distortion').disabled=fitting || state.parameters.contact;$('irradiation').disabled=fitting;
 }
 
 function startEngine() {
@@ -469,7 +503,7 @@ function startEngine() {
     if(data.id!==state.current?.id)return;
     if(data.type==='fit_parameters') {
       const current=state.current;
-      if(current.revision!==state.revision || current.stopped){
+      if(!requestMatches(current,state.revision,state.parameters.contact) || current.stopped){
         state.current=null;setBusy(false);requestModel('compute');return;
       }
       state.parameters={...data.parameters};
@@ -489,7 +523,7 @@ function startEngine() {
       const current=state.current;
       const advance=()=>{
         if(current!==state.current)return;
-        if(current.revision!==state.revision || pointerHeld || state.queued || current.stopped) {
+        if(!requestMatches(current,state.revision,state.parameters.contact) || pointerHeld || state.queued || current.stopped) {
           state.worker.postMessage({type:'release',id:current.id});
           state.current=null;setBusy(false);
           if(current.stopped && current.revision===state.revision) {
@@ -501,7 +535,7 @@ function startEngine() {
         }
         state.worker.postMessage({type:'continue',id:current.id});
       };
-      if(current.revision===state.revision && !pointerHeld && !current.stopped) {
+      if(requestMatches(current,state.revision,state.parameters.contact) && !pointerHeld && !current.stopped) {
         // The worker already scaled this partial curve to the observations.
         exactPartial={revision:current.revision,...compareDisplayCurve(data,normalizedData(),false)};
         previousExact=exactPartial;
@@ -521,7 +555,7 @@ function startEngine() {
     if(data.type==='progress') {status(data.stage||`Fitting · model evaluation ${data.evaluation} · RMS ${Number(data.rms).toFixed(4)}`,'busy');return;}
     if(data.type==='result') {
       const current=state.current;
-      const matches=!current.stopped && current.revision===state.revision;
+      const matches=!current.stopped && requestMatches(current,state.revision,state.parameters.contact);
       state.current=null;
       setBusy(false);
       if(matches) {
@@ -576,10 +610,10 @@ function requestModel(type='compute',fit=[]) {
   $('export-button').disabled=true;updateStats();drawPlots();
   const id=++state.request;
   const plotCount=type==='fit' ? 513 : plotPhases();
-  state.current={id,revision:state.revision,type,plotCount,tides:state.parameters.distortion,heating:state.parameters.irradiation};state.queued=false;setBusy(true,type==='fit');
+  state.current={id,revision:state.revision,type,plotCount,contact:state.parameters.contact,tides:state.parameters.distortion,heating:state.parameters.irradiation};state.queued=false;setBusy(true,type==='fit');
   status(type==='fit'?'Fitting selected parameters in this browser…':`Computing ${state.quality} model in this browser…`,'busy');
   clearInterval(elapsedTimer);
-  if(type==='compute' && (state.current.tides || state.current.heating)){
+  if(type==='compute' && (state.current.contact || state.current.tides || state.current.heating)){
     const started=performance.now(), revision=state.revision;
     elapsedTimer=setInterval(()=>{
       if(state.current?.id!==id || state.revision!==revision){clearInterval(elapsedTimer);return;}
@@ -782,6 +816,7 @@ function installDataset(dataset,parameters=null) {
   validateDataset(dataset);
   $('rv-error').textContent='';exampleRequest++;clearDisplay();exactPartial=null;previousExact=null;latestCompleted=null;latestFit=null;previousReference=null;exactHistory.clear();state.dataset=dataset;if(parameters)state.parameters={...DEFAULTS,...parameters};
   $('time-panel').hidden=dataset.x_kind!=='time';
+  if(!state.parameters.contact)detachedParameters={...state.parameters,contact:false};
   if(dataset.x_kind==='time'){
     state.parameters.period=parameters?.period??dataset.period;
     state.parameters.epoch=parameters?.epoch??dataset.epoch;
@@ -854,12 +889,13 @@ function prepareImport(parsed,name) {
 
 function download(name,text,type='application/json') {const url=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function loadExample(notify=true) {
+  if(state.parameters.contact)return;
   const id=++exampleRequest,choice=$('example-choice').value;
   try{
     const response=await fetch(new URL('../'+choice,import.meta.url));
     if(!response.ok)throw Error('The example could not be loaded.');
     const data=await response.json();
-    if(id!==exampleRequest || choice!==$('example-choice').value || state.fitting)return;
+    if(id!==exampleRequest || choice!==$('example-choice').value || state.fitting || state.parameters.contact)return;
     installDataset(data,choice==='example.json'?DEFAULTS:(data.truth||data.starting_parameters));
     if(notify)toast('Loaded '+data.name+'.');
   }catch(e){if(id===exampleRequest)toast(cleanError(e));}
@@ -909,18 +945,18 @@ function bindEvents() {
   for(const el of document.querySelectorAll('.close-dialog'))el.addEventListener('click',()=>el.closest('dialog').close());
   for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',(e)=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
   $('guide-button').onclick=()=>$('guide-dialog').showModal();
-  $('tidal-phases').onchange=()=>{if(state.parameters.distortion)parametersChanged();};
+  $('tidal-phases').onchange=()=>{if(state.parameters.distortion || state.parameters.contact)parametersChanged();};
   $('surface-workers').onchange=()=>{
-    if(state.current?.type==='compute' && (state.current.tides || state.current.heating))startEngine();
+    if(state.current?.type==='compute' && (state.current.contact || state.current.tides || state.current.heating))startEngine();
   };
   $('engine-retry').onclick=startEngine;
-  $('reset-button').onclick=()=>{state.parameters={...DEFAULTS};Object.keys(zoomOptions).forEach(centerSlider);updateControlValues();parametersChanged();};
-  $('example-button').onclick=()=>loadExample();
+  $('reset-button').onclick=()=>{state.parameters=state.parameters.contact?{...state.parameters,fillout_factor:.25,inclination:84.5,temperature_ratio:.84,mass_ratio:.75,period:1.8,epoch:0,irradiation:false}:{...DEFAULTS};Object.keys(zoomOptions).forEach(centerSlider);updateControlValues();parametersChanged();};
+  $('example-button').onclick=()=>{if(!state.parameters.contact)loadExample();};
   for(const button of document.querySelectorAll('.quality'))button.onclick=()=>{state.quality=button.dataset.quality;document.querySelectorAll('.quality').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});parametersChanged();scheduleCompute(50);};
   $('save-button').onclick=()=>{if(!state.dataset){toast('Load observations first.');return;}download('phoebe-lab-session.json',JSON.stringify({schema:'phoebe-lab-session-v1',parameters:state.parameters,dataset:state.dataset,quality:state.quality,tidal_phases:Number($('tidal-phases').value)},null,2));};
   $('export-button').onclick=()=>{if(state.result?.revision!==state.revision)return;download('phoebe-model.csv','phase,normalized_flux\n'+state.result.phases.map((x,i)=>`${x},${state.result.model[i]}`).join('\n')+'\n','text/csv');};
   $('stop-button').onclick=()=>{if(state.current?.type==='compute') {
-    if(state.current.tides||state.current.heating){
+    if(state.current.contact||state.current.tides||state.current.heating){
       clearInterval(elapsedTimer);clearTimeout(computeTimer);
       state.worker.terminate();state.worker=null;state.current=null;state.queued=false;
       state.ready=false;engineFailed=true;setBusy(false);
@@ -945,8 +981,8 @@ function bindEvents() {
         const project=JSON.parse(text);
         if(Array.isArray(project)){ $('import-dialog').close();nativeFiles.openFile(file);return; }
         if(project.schema!=='phoebe-lab-session-v1')throw Error('This is not a PHOEBE Lab session file.');
-        for(const [key,spec] of parameterInputs){const value=Number(project.parameters?.[key]);if(!Number.isFinite(value)||value<spec.min||value>spec.max)throw Error(`The saved ${key} value is outside this app’s supported range.`);}
-        for(const key of ['distortion','irradiation'])if(typeof project.parameters?.[key]!=='boolean')throw Error(`The saved ${key} setting is invalid.`);
+        for(const [key,spec] of parameterInputs){const value=Number(project.parameters?.[key] ?? DEFAULTS[key]);if(!Number.isFinite(value)||value<spec.min||value>spec.max)throw Error(`The saved ${key} value is outside this app’s supported range.`);}
+        for(const key of ['contact','distortion','irradiation'])if(typeof (project.parameters?.[key] ?? (key==='contact'?false:undefined))!=='boolean')throw Error(`The saved ${key} setting is invalid.`);
         $('tidal-phases').value=project.tidal_phases===129?'129':'513'; // Older sessions used 513.
         state.quality=project.quality==='refined'?'refined':'preview';
         document.querySelectorAll('.quality').forEach(b=>{const active=b.dataset.quality===state.quality;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
@@ -1040,6 +1076,16 @@ fetch(new URL('../experiment/near-roche-reference.json?v=658bddb7c8e01386',impor
   .then(response=>{if(!response.ok)throw Error(response.status);return response.json();})
   .then(reference=>{nearRocheReference=reference;refreshPreview();})
   .catch(error=>console.warn('Near-lobe reference unavailable',error));
+Promise.all([
+  import('../experiment/contact-predict.mjs'),
+  fetch(new URL('../experiment/contact-model.json',import.meta.url)).then(response=>{
+    if(!response.ok)throw Error(response.status);
+    return response.json();
+  }),
+]).then(([module,spec])=>{
+  predictContact=module.makeContactPredictor(spec);
+  refreshPreview();
+}).catch(error=>console.warn('Contact preview unavailable',error));
 const regionDetails=document.createElement('details');
 regionDetails.className='small';
 const regionTitle=document.createElement('summary');
@@ -1080,7 +1126,7 @@ predictDisplay=p=>joint(p) ?? paired(p) ??
     ? exploratory(p) : null);
 const coverage=document.createElement('p');
 coverage.className='muted small';
-coverage.textContent='Start from defaults. A purple drag curve supports inclination, eccentricity (0–0.24) and periastron angle together, or inclination, both radii and temperature ratio on a circular orbit. The amber network previews other eight-slider combinations. The amber surface preview includes tides and heating in the tested ranges below and on the original measured slices. The legend identifies any omitted effects.';
+coverage.textContent='Detached mode uses the purple tested slices or amber eight-slider/surface models described below. Contact mode never reuses them: its amber curve comes from a separate native-PHOEBE contact training set and fails closed outside inclination 65–90°, q 0.45–1.20, fill-out 0.10–0.50, T₂/T₁ 0.78–1.12, P=1.8 d, circular orbit, and irradiation off.';
 $('parameter-controls').before(coverage);
 document.querySelector('#curve-title + span').textContent='Drag preview · purple tested / amber exploratory';
 const nativeFiles=bindNativeFiles(()=>{

@@ -59,3 +59,16 @@ class NativeFileTests(unittest.TestCase):
     def test_unsupported_inputs(self):
         for text in ('phoebe legacy', '{}', '[{"Class":"JobParameter"}]'):
             with self.assertRaises(ValueError):records(text)
+
+    def test_contact_lab_bundle_uses_contact_hierarchy(self):
+        w=Workspace()
+        p=dict(model.DEFAULTS,contact=True,fillout_factor=.25,mass_ratio=.75,
+               inclination=84.5,eccentricity=0.,distortion=False,irradiation=False)
+        phases=np.linspace(-.5,.5,9)
+        data=dict(name='contact photometry',x_kind='phase',y_kind='flux',
+                  x=phases.tolist(),y=np.ones(len(phases)).tolist(),sigma=None)
+        w.act('lab',dict(parameters=p,quality='preview',dataset=data,phases=phases.tolist()))
+        b=phoebe.open(json.loads(w.act('save_bundle',{})))
+        self.assertIn('contact_envelope',b.components)
+        self.assertEqual(b.get_value('fillout_factor@contact_envelope@component'),.25)
+        self.assertEqual(len(w.series('ui_model')[0]['times']),9)

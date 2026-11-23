@@ -7,6 +7,8 @@ runs **real PHOEBE 2.5.4**, including its compiled C++ extensions, through
 Pyodide/WebAssembly. GitHub Pages serves static files only; no PHOEBE server,
 JupyterHub account, API key, or connection to boole is required.
 
+> **`contact-binary` feature branch:** the standalone lab adds an experimental Contact switch backed by a separately trained native-PHOEBE contact surrogate. It is not deployed from this branch. The companion notebook is [`notebooks/PHOEBE_Contact_Binary_Colab.ipynb`](notebooks/PHOEBE_Contact_Binary_Colab.ipynb); reproducible generation, validation metrics, and limits are in [`experiments/contact/`](experiments/contact/).
+
 ## Use the lab
 
 Open the site in a recent desktop browser. The initial download is about 60 MB

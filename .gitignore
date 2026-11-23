@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+.venv/
 site/runtime/
 site/source/
 site/engine/*.whl
