@@ -96,11 +96,15 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
 def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     app=(ROOT / "site" / "assets" / "app.js").read_text()
     client=(ROOT / "site" / "assets" / "engine-client.mjs").read_text()
+    mode=(ROOT / "site" / "assets" / "runtime-mode.mjs").read_text()
     html=(ROOT / "site" / "index.html").read_text()
     assert "createScientificEngine" in app and "nativeKernelConfig" in app
     assert "Colab native engine ready" in app and "Browser engine ready" in app
     assert "engine_runtime" in app and "Colab native Python" in app and "Browser WebAssembly" in app
-    assert "Native PHOEBE project files are intentionally disabled in Colab" in app
+    assert "applyColabRuntimeUI(document,nativeKernelConfig)" in app
+    assert "canOpenAdvancedWorkspace(nativeKernelConfig)" in app
+    assert "isNativeProjectJson(project)" in app
+    assert "Native PHOEBE project files are intentionally disabled in Colab" in mode
     assert "nativeKernelConfig ? new ColabNativeEngine" in client
     assert "new Worker(workerURL,{type:'module'})" in client
     assert "PHOEBE_COLAB_NATIVE" not in html

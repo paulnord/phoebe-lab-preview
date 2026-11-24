@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 
 globalThis.PHOEBE_COLAB_NATIVE={endpoint:'http://127.0.0.1:9999/_phoebe_native/'};
-const calls=[];
+const calls=[];let failStatus=false;
 globalThis.fetch=async(url,options={})=>{
   const path=new URL(url).pathname;const body=options.body?JSON.parse(options.body):null;
   calls.push({path,body});
+  if(path.endsWith('/status')&&failStatus)return {ok:false,status:503,json:async()=>({error:'native startup failed'})};
   let value;
   if(path.endsWith('/status'))value={version:'2.5.4',runtime:'test-python'};
   else if(path.endsWith('/cancel'))value={cancelled:true};
@@ -36,4 +37,11 @@ assert.equal(messages.at(-1).type,'surface_result');assert.equal(messages.at(-1)
 engine.postMessage({type:'compute',id:'cancel-me',payload:{}});engine.postMessage({type:'release',id:'cancel-me'});
 await flush();await flush();
 assert(calls.some(call=>call.path.endsWith('/cancel')&&call.body.id==='cancel-me'));
-console.log('Colab native engine client: initialize, compute, fit handshake, surface, cancel passed');
+
+failStatus=true;
+const failed=createScientificEngine(new URL('file:///unused-worker.js'));const failedMessages=[];
+failed.onmessage=event=>failedMessages.push(event.data);failed.postMessage({type:'initialize'});
+await flush();await flush();
+assert.equal(failedMessages.at(-1).type,'fatal');assert.match(failedMessages.at(-1).error,/native startup failed/);
+
+console.log('Colab native engine client: initialize, failed startup, compute, fit handshake, surface, cancel passed');

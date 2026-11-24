@@ -5,7 +5,9 @@ import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity
 import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
 import {requestMatches} from './request-guard.mjs?v=geometry1';
 import {createScientificEngine,nativeKernelConfig} from './engine-client.mjs?v=colab-native1';
+import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=colab-native2';
 const $ = (id) => document.getElementById(id);
+applyColabRuntimeUI(document,nativeKernelConfig);
 const DEFAULTS = {contact:false,semidetached:false,donor:'primary',inclination:84.5,radius_primary:.21,radius_secondary:.17,fillout_factor:.25,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [
   {name:'Orbit',items:[
@@ -557,7 +559,7 @@ function startEngine() {
   state.ready=false;setBusy(false);state.queued=false;state.current=null;
   refreshPreview();
   $('engine-banner').hidden=false;$('engine-retry').hidden=true;
-  $('engine-pill').innerHTML='<span class="status-dot loading"></span>Loading engine';
+  $('engine-pill').innerHTML=nativeKernelConfig?'<span class="status-dot loading"></span>Connecting to Colab native engine':'<span class="status-dot loading"></span>Loading browser engine';
   status(nativeKernelConfig?'Connecting to native PHOEBE in this Colab runtime…':'Starting the browser engine…','busy');
   state.worker=createScientificEngine(new URL('./engine.worker.js?v=switch-safe1',import.meta.url));
   const worker=state.worker;
@@ -567,15 +569,6 @@ function startEngine() {
     if(data.type==='ready') {
       state.ready=true;$('engine-banner').hidden=true;
       $('engine-pill').innerHTML=nativeKernelConfig?'<span class="status-dot"></span>Colab native engine ready':'<span class="status-dot"></span>Browser engine ready';
-      if(nativeKernelConfig){
-        $('engine-runtime').innerHTML='Calculated by <a href="https://phoebe-project.org/" target="_blank" rel="noreferrer">PHOEBE 2.5.4</a> in this Colab Python runtime';
-        document.querySelector('footer span:last-child').textContent='Uploaded observations stay in this Colab session.';
-        $('native-button').disabled=true;$('native-button').title='The separate PHOEBE file workspace is available in the standalone browser build.';
-        $('data-file').accept='.csv,.tsv,.txt,.dat,.json';
-        document.querySelector('label[for="data-file"] span:last-of-type').textContent='CSV, TSV, TXT, or PHOEBE Lab session JSON';
-        const runtimeGuide=[...document.querySelectorAll('#guide-dialog p')].find(p=>p.textContent.includes('What is actually running?'));
-        if(runtimeGuide)runtimeGuide.innerHTML='<strong>What is actually running?</strong> Instant trained previews and orbit playback run in this browser. Exact light curves, bounded fits, residual statistics, CSV results, and native surface meshes run with PHOEBE 2.5.4 in this Colab notebook\u2019s native Python process. Changing geometry or donor cancels or supersedes the old request and invalidates its exact statistics/export. The standalone page instead uses the reviewed WebAssembly worker.';
-      }
       requestModel('compute');scheduleOrbitSurface();return;
     }
     if(data.type==='fatal') {
@@ -1075,14 +1068,17 @@ function bindEvents() {
     const file=e.target.files[0];if(!file)return;$('import-error').textContent='';
     try {
       if(/\.(phoebe|bundle|out|ps|model)$/i.test(file.name)) {
-        if(nativeKernelConfig)throw Error('Native PHOEBE project files are intentionally disabled in Colab. Import an observation table or PHOEBE Lab session; exact curves, fits, and surfaces run in this notebook’s Python PHOEBE runtime.');
+        if(!canOpenAdvancedWorkspace(nativeKernelConfig))throw Error(NATIVE_PROJECT_ERROR);
         $('import-dialog').close();nativeFiles.openFile(file);return;
       }
       if(file.size>5000000 && !file.name.toLowerCase().endsWith('.json'))throw Error('Choose a file smaller than 5 MB.');
       const text=await file.text();
       if(file.name.toLowerCase().endsWith('.json')) {
         const project=JSON.parse(text);
-        if(Array.isArray(project)){ $('import-dialog').close();nativeFiles.openFile(file);return; }
+        if(isNativeProjectJson(project)){
+          if(!canOpenAdvancedWorkspace(nativeKernelConfig))throw Error(NATIVE_PROJECT_ERROR);
+          $('import-dialog').close();nativeFiles.openFile(file);return;
+        }
         if(project.schema!=='phoebe-lab-session-v1')throw Error('This is not a PHOEBE Lab session file.');
         for(const [key,spec] of parameterInputs){const value=Number(project.parameters?.[key] ?? DEFAULTS[key]);if(!Number.isFinite(value)||value<spec.min||value>spec.max)throw Error(`The saved ${key} value is outside this app’s supported range.`);}
         for(const key of ['contact','semidetached','distortion','irradiation'])if(typeof (project.parameters?.[key] ?? (key==='contact'||key==='semidetached'?false:undefined))!=='boolean')throw Error(`The saved ${key} setting is invalid.`);
