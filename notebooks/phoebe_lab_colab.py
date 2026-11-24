@@ -8,7 +8,10 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
+import importlib.util
+import json
 import os
+import sys
 import threading
 import tempfile
 import urllib.error
@@ -21,6 +24,50 @@ PUBLISHED_BASE = "https://paulnord.github.io/phoebe-lab-preview/"
 _server = None
 _thread = None
 _download_root = None
+
+
+class NativeKernel:
+    """Serialize the shared UI's heavy work through native PHOEBE in Python."""
+    def __init__(self, site):
+        os.environ.update(PHOEBE_ENABLE_ONLINE_PASSBANDS="FALSE", PHOEBE_ENABLE_MPI="FALSE",
+                          PHOEBE_MULTIPROC_NPROCS="0", OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
+        path = Path(site) / "engine" / "model.py"
+        spec = importlib.util.spec_from_file_location("phoebe_lab_native_model", path)
+        self.model = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.model)
+        self.lock = threading.Lock(); self.jobs = {}; self.jobs_lock = threading.Lock()
+
+    def status(self):
+        return {"backend":"native-python", "version":self.model.phoebe.__version__,
+                "runtime":f"{sys.executable} · Python {sys.version.split()[0]}", "pid":os.getpid()}
+
+    def cancel(self, job_id):
+        with self.jobs_lock:
+            event = self.jobs.get(str(job_id))
+        if event is not None: event.set()
+
+    def run(self, job_id, operation, payload):
+        job_id=str(job_id);cancelled=threading.Event()
+        with self.jobs_lock:self.jobs[job_id]=cancelled
+        try:
+            with self.lock:
+                if cancelled.is_set(): raise RuntimeError("Cancelled.")
+                if operation == "surface":
+                    value=self.model.surface_mesh(payload)
+                    return {"value":value,"runtime":self.status()}
+                if operation == "fit":
+                    result=self.model.fit(dict(payload,workers=1))
+                elif operation == "compute":
+                    result=None
+                    for update in self.model.progressive_curve(dict(payload,workers=1)):
+                        if cancelled.is_set(): raise RuntimeError("Cancelled.")
+                        if update["type"] == "result":result=update["result"]
+                    if result is None:raise RuntimeError("Native PHOEBE did not return a complete curve.")
+                else:raise ValueError("Unknown native operation.")
+                result["runtime"]="Colab native Python"
+                result["native_python"]=True
+                return {"result":result,"runtime":self.status()}
+        finally:
+            with self.jobs_lock:self.jobs.pop(job_id,None)
 
 
 def find_local_site(start=None):
@@ -52,6 +99,7 @@ def download_feature_site(url=SOURCE_ARCHIVE):
 class LabOverlayHandler(SimpleHTTPRequestHandler):
     """Serve branch UI files locally and proxy omitted runtime assets."""
     published_base = PUBLISHED_BASE
+    native_kernel = None
 
     def log_message(self, format, *args):
         pass
@@ -85,11 +133,45 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
         except Exception as error:
             self.send_error(502, f"Could not load published runtime asset: {error}")
 
+    def _json(self, value, status=200):
+        data=json.dumps(value,allow_nan=False).encode()
+        self.send_response(status);self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(data)));self.send_header("Cache-Control","no-store")
+        self.end_headers();self.wfile.write(data)
+
+    def _serve_colab_index(self):
+        text=(Path(self.directory)/"index.html").read_text()
+        config='<script>globalThis.PHOEBE_COLAB_NATIVE={endpoint:new URL("./_phoebe_native/",location.href).href};</script>'
+        data=text.replace("</head>",config+"\n</head>").encode()
+        self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8")
+        self.send_header("Content-Length",str(len(data)));self.send_header("Cache-Control","no-store")
+        self.end_headers();self.wfile.write(data)
+
     def do_GET(self):
+        path=urllib.parse.urlsplit(self.path).path
+        if path == "/_phoebe_native/status" and self.native_kernel:return self._json(self.native_kernel.status())
+        if path in ("/","/index.html") and self.native_kernel:return self._serve_colab_index()
         local = self._local_path()
         if local is not None and local.exists():
             return super().do_GET()
         return self._proxy(False)
+
+    def do_POST(self):
+        path=urllib.parse.urlsplit(self.path).path
+        if not self.native_kernel or path not in ("/_phoebe_native/run","/_phoebe_native/cancel"):
+            return self._json({"error":"Native Colab backend is unavailable."},404)
+        try:
+            length=int(self.headers.get("Content-Length","0"))
+            if length<2 or length>10_000_000:raise ValueError("Invalid request size.")
+            message=json.loads(self.rfile.read(length))
+            if path.endswith("/cancel"):
+                self.native_kernel.cancel(message.get("id"));return self._json({"cancelled":True})
+            value=self.native_kernel.run(message.get("id"),message.get("operation"),message.get("payload",{}))
+            try:return self._json(value)
+            except (BrokenPipeError,ConnectionResetError):return
+        except Exception as error:
+            try:return self._json({"error":str(error)[:900]},409 if "Cancelled" in str(error) else 400)
+            except (BrokenPipeError,ConnectionResetError):return
 
     def do_HEAD(self):
         local = self._local_path()
@@ -98,7 +180,7 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
         return self._proxy(True)
 
 
-def start_lab(site=None):
+def start_lab(site=None, kernel=None):
     """Start or restart the loopback server and return it."""
     global _server, _thread
     if _server is not None:
@@ -107,7 +189,9 @@ def start_lab(site=None):
     site = Path(site) if site is not None else find_local_site()
     if site is None:
         site = download_feature_site()
-    handler = partial(LabOverlayHandler, directory=str(site.resolve()))
+    if kernel is None:kernel=NativeKernel(site)
+    handler_class=type("BoundLabOverlayHandler",(LabOverlayHandler,),{"native_kernel":kernel})
+    handler = partial(handler_class, directory=str(site.resolve()))
     _server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     _thread = threading.Thread(target=_server.serve_forever, name="phoebe-lab", daemon=True)
     _thread.start()

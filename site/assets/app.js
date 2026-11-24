@@ -4,6 +4,7 @@ import {clearSeparation, supported as detachedWithin} from '../experiment/region
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
 import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
 import {requestMatches} from './request-guard.mjs?v=geometry1';
+import {createScientificEngine,nativeKernelConfig} from './engine-client.mjs?v=colab-native1';
 const $ = (id) => document.getElementById(id);
 const DEFAULTS = {contact:false,semidetached:false,donor:'primary',inclination:84.5,radius_primary:.21,radius_secondary:.17,fillout_factor:.25,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
 const GROUPS = [
@@ -557,14 +558,24 @@ function startEngine() {
   refreshPreview();
   $('engine-banner').hidden=false;$('engine-retry').hidden=true;
   $('engine-pill').innerHTML='<span class="status-dot loading"></span>Loading engine';
-  status('Starting the browser engine…','busy');
-  state.worker=new Worker(new URL('./engine.worker.js?v=switch-safe1',import.meta.url),{type:'module'});
+  status(nativeKernelConfig?'Connecting to native PHOEBE in this Colab runtime…':'Starting the browser engine…','busy');
+  state.worker=createScientificEngine(new URL('./engine.worker.js?v=switch-safe1',import.meta.url));
   const worker=state.worker;
   state.worker.onmessage=({data})=>{
     if(worker!==state.worker)return;
     if(data.type==='status') {$('engine-title').textContent=data.title;$('engine-detail').textContent=data.detail;return;}
     if(data.type==='ready') {
-      state.ready=true;$('engine-banner').hidden=true;$('engine-pill').innerHTML='<span class="status-dot"></span>Browser engine ready';
+      state.ready=true;$('engine-banner').hidden=true;
+      $('engine-pill').innerHTML=nativeKernelConfig?'<span class="status-dot"></span>Colab native engine ready':'<span class="status-dot"></span>Browser engine ready';
+      if(nativeKernelConfig){
+        $('engine-runtime').innerHTML='Calculated by <a href="https://phoebe-project.org/" target="_blank" rel="noreferrer">PHOEBE 2.5.4</a> in this Colab Python runtime';
+        document.querySelector('footer span:last-child').textContent='Uploaded observations stay in this Colab session.';
+        $('native-button').disabled=true;$('native-button').title='The separate PHOEBE file workspace is available in the standalone browser build.';
+        $('data-file').accept='.csv,.tsv,.txt,.dat,.json';
+        document.querySelector('label[for="data-file"] span:last-of-type').textContent='CSV, TSV, TXT, or PHOEBE Lab session JSON';
+        const runtimeGuide=[...document.querySelectorAll('#guide-dialog p')].find(p=>p.textContent.includes('What is actually running?'));
+        if(runtimeGuide)runtimeGuide.innerHTML='<strong>What is actually running?</strong> Instant trained previews and orbit playback run in this browser. Exact light curves, bounded fits, residual statistics, CSV results, and native surface meshes run with PHOEBE 2.5.4 in this Colab notebook\u2019s native Python process. Changing geometry or donor cancels or supersedes the old request and invalidates its exact statistics/export. The standalone page instead uses the reviewed WebAssembly worker.';
+      }
       requestModel('compute');scheduleOrbitSurface();return;
     }
     if(data.type==='fatal') {
@@ -696,7 +707,8 @@ function requestModel(type='compute',fit=[]) {
   const id=++state.request;
   const plotCount=type==='fit' ? 513 : plotPhases();
   state.current={id,revision:state.revision,type,plotCount,mode:modeOf(state.parameters),tides:state.parameters.distortion,heating:state.parameters.irradiation};state.queued=false;setBusy(true,type==='fit');
-  status(type==='fit'?'Fitting selected parameters in this browser…':`Computing ${state.quality} model in this browser…`,'busy');
+  const location=nativeKernelConfig?'in Colab’s native Python runtime':'in this browser';
+  status(type==='fit'?`Fitting selected parameters ${location}…`:`Computing ${state.quality} model ${location}…`,'busy');
   clearInterval(elapsedTimer);
   if(type==='compute' && (state.current.mode!=='detached' || state.current.tides || state.current.heating)){
     const started=performance.now(), revision=state.revision;
@@ -1039,7 +1051,12 @@ function bindEvents() {
   $('example-button').onclick=()=>{if(modeOf(state.parameters)==='detached')loadExample();};
   for(const button of document.querySelectorAll('.quality'))button.onclick=()=>{state.quality=button.dataset.quality;document.querySelectorAll('.quality').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});parametersChanged();scheduleCompute(50);};
   $('save-button').onclick=()=>{if(!state.dataset){toast('Load observations first.');return;}download('phoebe-lab-session.json',JSON.stringify({schema:'phoebe-lab-session-v1',parameters:state.parameters,dataset:state.dataset,quality:state.quality,tidal_phases:Number($('tidal-phases').value)},null,2));};
-  $('export-button').onclick=()=>{if(state.result?.revision!==state.revision)return;download('phoebe-model.csv','phase,normalized_flux\n'+state.result.phases.map((x,i)=>`${x},${state.result.model[i]}`).join('\n')+'\n','text/csv');};
+  $('export-button').onclick=()=>{
+    if(state.result?.revision!==state.revision)return;
+    const runtime=state.result.runtime || (nativeKernelConfig?'Colab native Python':'Browser WebAssembly');
+    const quoted='"'+String(runtime).replaceAll('"','""')+'"';
+    download('phoebe-model.csv','phase,normalized_flux,engine_runtime\n'+state.result.phases.map((x,i)=>`${x},${state.result.model[i]},${quoted}`).join('\n')+'\n','text/csv');
+  };
   $('stop-button').onclick=()=>{if(state.current?.type==='compute') {
     if(state.current.mode!=='detached'||state.current.tides||state.current.heating){
       clearInterval(elapsedTimer);clearTimeout(computeTimer);
@@ -1058,6 +1075,7 @@ function bindEvents() {
     const file=e.target.files[0];if(!file)return;$('import-error').textContent='';
     try {
       if(/\.(phoebe|bundle|out|ps|model)$/i.test(file.name)) {
+        if(nativeKernelConfig)throw Error('Native PHOEBE project files are intentionally disabled in Colab. Import an observation table or PHOEBE Lab session; exact curves, fits, and surfaces run in this notebook’s Python PHOEBE runtime.');
         $('import-dialog').close();nativeFiles.openFile(file);return;
       }
       if(file.size>5000000 && !file.name.toLowerCase().endsWith('.json'))throw Error('Choose a file smaller than 5 MB.');

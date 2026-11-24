@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import threading
+import urllib.error
 import urllib.request
 
 import nbformat
@@ -24,7 +25,7 @@ def test_geometry_is_visible_first_class_model_choice():
 
 
 def test_launcher_serves_the_actual_workbench():
-    server = launcher.start_lab(ROOT / "site")
+    server = launcher.start_lab(ROOT / "site",kernel=False)
     try:
         base = f"http://127.0.0.1:{server.server_address[1]}"
         index = urllib.request.urlopen(base + "/", timeout=5).read().decode()
@@ -33,6 +34,7 @@ def test_launcher_serves_the_actual_workbench():
         contact = json.load(urllib.request.urlopen(base + "/experiment/contact-model.json", timeout=5))
         assert "PHOEBE Lab" in index and 'id="light-curve"' in index and 'id="fit-button"' in index
         assert "setGeometryMode" in app and semi["accepted"] and contact["accepted"]
+        assert "PHOEBE_COLAB_NATIVE" not in index
     finally:
         launcher.stop_lab()
 
@@ -45,7 +47,7 @@ def test_missing_runtime_files_are_proxied_from_published_origin(tmp_path):
     local = tmp_path / "local"; local.mkdir(); (local / "index.html").write_text("local")
     prior = launcher.LabOverlayHandler.published_base
     launcher.LabOverlayHandler.published_base = f"http://127.0.0.1:{upstream.server_address[1]}/"
-    server = launcher.start_lab(local)
+    server = launcher.start_lab(local,kernel=False)
     try:
         base = f"http://127.0.0.1:{server.server_address[1]}"
         assert urllib.request.urlopen(base + "/index.html").read() == b"local"
@@ -61,7 +63,47 @@ def test_generated_notebook_is_the_familiar_lab_not_widget_replacement():
     assert "same PHOEBE Lab workbench" in source
     assert "show_lab(height=1050)" in source
     assert "LabOverlayHandler" in source
+    assert 'phoebe==2.5.4' in source
+    assert "Colab native Python" in source
+    assert "exact curves, fits, and native surface meshes" in source
     assert "BinaryFitterApp" not in source and "ToggleButtons" not in source
+
+
+def test_colab_overlay_injects_native_transport_and_routes_requests():
+    class FakeKernel:
+        def __init__(self): self.calls=[]
+        def status(self): return {"backend":"native-python","version":"2.5.4","pid":123}
+        def cancel(self, job_id): self.calls.append(("cancel",job_id))
+        def run(self, job_id, operation, payload):
+            self.calls.append((job_id,operation,payload))
+            return {"result":{"native_python":True,"runtime":"Colab native Python"}}
+    kernel=FakeKernel();server=launcher.start_lab(ROOT / "site",kernel=kernel)
+    try:
+        base=f"http://127.0.0.1:{server.server_address[1]}"
+        index=urllib.request.urlopen(base+"/",timeout=5).read().decode()
+        assert "PHOEBE_COLAB_NATIVE" in index and "_phoebe_native/" in index
+        status=json.load(urllib.request.urlopen(base+"/_phoebe_native/status",timeout=5))
+        assert status["backend"]=="native-python" and status["version"]=="2.5.4"
+        body=json.dumps({"id":"job-7","operation":"compute","payload":{"geometry":"contact"}}).encode()
+        request=urllib.request.Request(base+"/_phoebe_native/run",data=body,
+                                       headers={"Content-Type":"application/json"})
+        answer=json.load(urllib.request.urlopen(request,timeout=5))
+        assert answer["result"]["native_python"] is True
+        assert kernel.calls==[("job-7","compute",{"geometry":"contact"})]
+    finally: launcher.stop_lab()
+
+
+def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
+    app=(ROOT / "site" / "assets" / "app.js").read_text()
+    client=(ROOT / "site" / "assets" / "engine-client.mjs").read_text()
+    html=(ROOT / "site" / "index.html").read_text()
+    assert "createScientificEngine" in app and "nativeKernelConfig" in app
+    assert "Colab native engine ready" in app and "Browser engine ready" in app
+    assert "engine_runtime" in app and "Colab native Python" in app and "Browser WebAssembly" in app
+    assert "Native PHOEBE project files are intentionally disabled in Colab" in app
+    assert "nativeKernelConfig ? new ColabNativeEngine" in client
+    assert "new Worker(workerURL,{type:'module'})" in client
+    assert "PHOEBE_COLAB_NATIVE" not in html
 
 
 def test_commit_pinned_preview_reuses_only_generated_public_runtime():
