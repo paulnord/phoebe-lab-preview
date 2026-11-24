@@ -27,7 +27,7 @@ export function orbitProjection(p, view) {
     // Rotate the entire overhead frame 180°, preserving orbital direction.
     const [x,y]=view==='above'?[-across,along]:[across,-along*ci];
     const separation=1-e*Math.cos(E);
-    return {stars:factors.map(f=>({x:f*x,y:f*y})),front:Math.abs(si)<1e-9?null:along>=0?1:0,
+    return {stars:factors.map(f=>({x:f*x,y:f*y})),depths:factors.map(f=>view==='above'?0:f*along*si),front:Math.abs(si)<1e-9?null:along>=0?1:0,
       separation,cosLongitude:across/separation,sinLongitude:along/separation};
   };
 }
@@ -117,7 +117,7 @@ export function projectNativeSurface(mesh,p,phase,view) {
     const across=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
     const along=sign*(u*pos.sinLongitude+v*pos.cosLongitude);
     const relative=view==='above'?[-across,along,z]:[across,-along*ci+z*si,along*si+z*ci];
-    return center?[center.x+relative[0],center.y+relative[1],relative[2]]:relative;
+    return center?[center.x+relative[0],center.y+relative[1],pos.depths[component]+relative[2]]:relative;
   }
   const triangles=[];
   mesh.components.forEach((part,component)=>{
@@ -130,6 +130,8 @@ export function projectNativeSurface(mesh,p,phase,view) {
   });
   return {position:pos,triangles,neck:mesh.neck};
 }
+
+export const nativeTrianglePaintOrder=triangles=>[...triangles].sort((a,b)=>a.depth-b.depth);
 
 function nativeOrbitPainter(p,view,mesh) {
   const position=orbitProjection(p,view),paths=[[],[]];
@@ -151,13 +153,11 @@ function nativeOrbitPainter(p,view,mesh) {
       ctx.closePath();ctx.stroke();ctx.setLineDash([]);
     });
     const projected=projectNativeSurface(mesh,p,phase,view);
-    projected.triangles.sort((a,b)=>a.depth-b.depth);
-    for(const triangle of projected.triangles){
+    for(const triangle of nativeTrianglePaintOrder(projected.triangles)){
       const [[x0,y0],[x1,y1],[x2,y2]]=triangle.points;
       const area=Math.abs((x1-x0)*(y2-y0)-(y1-y0)*(x2-x0));
       if(area<1e-10)continue;
-      const depthSpread=Math.max(...triangle.points.map(v=>v[2]))-Math.min(...triangle.points.map(v=>v[2]));
-      ctx.globalAlpha=Math.max(.58,Math.min(.94,.78+.5*depthSpread));
+      ctx.globalAlpha=1;
       ctx.fillStyle=colors[triangle.component];ctx.strokeStyle=colors[triangle.component]+'88';ctx.lineWidth=.35;
       ctx.beginPath();ctx.moveTo(px(x0),py(y0));ctx.lineTo(px(x1),py(y1));ctx.lineTo(px(x2),py(y2));ctx.closePath();ctx.fill();ctx.stroke();
     }

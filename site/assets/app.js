@@ -1,4 +1,4 @@
-import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=native-surfaces1';
+import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=opaque-surfaces1';
 import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=geometry1';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';

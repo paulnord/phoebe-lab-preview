@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface} from '../site/assets/orbit-viewer.mjs';
+import {orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface, nativeTrianglePaintOrder} from '../site/assets/orbit-viewer.mjs';
 import {tidalOutline, tidalSurfaceModel} from "../site/assets/stellar-shapes.mjs";
 
 const p={eccentricity:0,omega:90,inclination:90,mass_ratio:.75};
@@ -94,6 +94,19 @@ assert.ok(range(semi0.triangles[0],1)>range(semi0.triangles[0],0),'phase zero li
 assert.ok(range(semiQuarter.triangles[0],0)>range(semiQuarter.triangles[0],1),'quarter-phase line of centers is horizontal overhead');
 assert.throws(()=>projectNativeSurface({...semiMesh,donor:'secondary'},semiParams,0,'above'),/stale/);
 
+const conjunctionMesh=donor=>({schema:1,geometry:'semi',donor,frame:'component_local',components:[
+  {triangles:[[[-.03,-.02,-.02],[.03,-.02,.02],[0,.03,0]]]},
+  {triangles:[[[-.03,-.02,-.02],[.03,-.02,.02],[0,.03,0]]]}
+]});
+for(const donor of ['primary','secondary'])for(const phase of [0,.5]){
+  const parameters={...semiParams,donor};
+  const projected=projectNativeSurface(conjunctionMesh(donor),parameters,phase,'earth');
+  const painted=nativeTrianglePaintOrder(projected.triangles);
+  assert.equal(painted.at(-1).component,projected.position.front,
+    `${donor} donor: the foreground native star is painted last at phase ${phase}`);
+  assert.ok(painted.at(-1).depth>painted[0].depth,'semi-detached conjunction has a strict foreground depth');
+}
+
 const contactParams={...semiParams,contact:true,semidetached:false,mass_ratio:1,fillout_factor:.25};
 const contactMesh={schema:1,geometry:'contact',donor:'primary',frame:'primary_origin',neck:.5,components:[
   {triangles:[[[0,-.2,0],[.5,-.08,.08],[.5,.08,.08]],[[0,-.2,0],[.5,.08,.08],[0,.2,0]]]},
@@ -105,4 +118,13 @@ const primaryY=common.triangles.filter(t=>t.component===0).flatMap(t=>t.points.m
 const secondaryY=common.triangles.filter(t=>t.component===1).flatMap(t=>t.points.map(v=>v[1]));
 assert.ok(Math.max(...primaryY)>=Math.min(...secondaryY)-1e-12,'contact halves meet at the native neck');
 assert.notEqual(surfaceGeometryKey(contactParams),surfaceGeometryKey({...contactParams,fillout_factor:.3}),'fill-out rebuilds common envelope');
-console.log('PASS: native semi/contact surfaces rotate with phase, donor staleness fails closed, contact neck remains connected');
+for(const phase of [0,.5]){
+  const projected=projectNativeSurface(contactMesh,contactParams,phase,'earth');
+  const painted=nativeTrianglePaintOrder(projected.triangles);
+  assert.equal(painted.at(-1).component,projected.position.front,
+    `the foreground contact half is painted last at phase ${phase}`);
+}
+const viewerSource=await import('node:fs/promises').then(fs=>fs.readFile(new URL('../site/assets/orbit-viewer.mjs',import.meta.url),'utf8'));
+assert.match(viewerSource,/ctx\.globalAlpha=1;/,'native PHOEBE surfaces are fully opaque');
+assert.doesNotMatch(viewerSource,/Math\.max\(\.58,Math\.min\(\.94/,'the former translucent surface range is gone');
+console.log('PASS: opaque native semi/contact surfaces rotate with phase, both conjunctions occlude correctly, donor staleness fails closed, contact neck remains connected');
