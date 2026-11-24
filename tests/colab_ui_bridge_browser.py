@@ -23,7 +23,9 @@ launcher = importlib.util.module_from_spec(spec); spec.loader.exec_module(launch
 
 class ProbeKernel:
     def __init__(self): self.calls=[]
-    def status(self): return {"backend":"native-python","version":"2.5.4","runtime":"probe Python","pid":123}
+    def status(self): return {"backend":"native-python","version":"2.5.4","runtime":"probe Python","pid":123,
+                              "cpu_capacity":{"affinity_cpus":4,"cgroup_quota_cpus":2.0,"usable_cpu_equivalents":2.0},
+                              "supported_workers":1}
     def cancel(self,job_id): self.calls.append(("cancel",job_id))
     def run(self,job_id,operation,payload):
         if operation!="surface":raise AssertionError(f"unexpected non-stream operation {operation}")
@@ -87,6 +89,22 @@ def main():
             assert "browser WebAssembly" not in page.locator("#engine-detail").inner_text()
             assert page.locator("#window-button").is_disabled()
             assert "no longer provides a reliable" in page.locator("#window-button").get_attribute("title")
+
+            def load_observations(name,period,epoch,count):
+                page.locator("#import-button").click()
+                page.locator("#data-file").set_input_files(str(ROOT/"site"/"examples"/name))
+                page.locator("#import-options").wait_for(state="visible")
+                assert page.locator("#x-kind").input_value()=="time"
+                assert page.locator("#y-kind").input_value()=="magnitude"
+                assert page.locator("#sigma-column").input_value()=="none"
+                page.locator("#import-period").fill(str(period));page.locator("#import-epoch").fill(str(epoch))
+                page.locator("#load-file-button").click()
+                page.locator("#dataset-description").get_by_text(f"{count} points",exact=False).wait_for()
+
+            load_observations("observed-gsc3822-1056-johnson-v.csv",.30989069,2450495.5212,271)
+            page.locator("#geometry-contact").check()
+            load_observations("observed-sz-her-johnson-v.csv",.8180837,2454588.167997,437)
+            page.locator("#geometry-semi").check();page.locator("#donor").select_option("secondary")
 
             # A denied iframe fullscreen request is reported and cannot alter routing.
             page.evaluate("Object.defineProperty(document.documentElement,'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))})")
