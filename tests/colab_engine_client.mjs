@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
 
 globalThis.PHOEBE_COLAB_NATIVE={endpoint:'http://127.0.0.1:9999/_phoebe_native/'};
-const calls=[];let failStatus=false;
+const calls=[];let failStatus=false,htmlStatus=false,htmlOperation=null,emptyOperation=null;
 globalThis.fetch=async(url,options={})=>{
   const path=new URL(url).pathname;const body=options.body?JSON.parse(options.body):null;
   calls.push({path,body});
   if(path.endsWith('/status')&&failStatus)return {ok:false,status:503,json:async()=>({error:'native startup failed'})};
+  if((path.endsWith('/status')&&htmlStatus) || body?.operation===htmlOperation)
+    return {ok:true,status:200,json:async()=>{throw new SyntaxError('Unexpected token <');}};
+  if(body?.operation===emptyOperation)return {ok:true,status:200,json:async()=>({})};
   let value;
-  if(path.endsWith('/status'))value={version:'2.5.4',runtime:'test-python'};
+  if(path.endsWith('/status'))value={backend:'native-python',version:'2.5.4',runtime:'test-python'};
   else if(path.endsWith('/cancel'))value={cancelled:true};
-  else if(body.operation==='surface')value={value:{geometry:'contact',neck:.1}};
-  else value={result:{parameters:{inclination:85},phases:[-.5,.5],model:[1,1],native_python:true}};
+  else if(body.operation==='surface')value={value:{source:'native PHOEBE 2.5.4',geometry:'contact',neck:.1,components:[{name:'primary'},{name:'secondary'}]}};
+  else value={result:{parameters:{inclination:85},phases:[-.5,.5],model:[1,1],native_python:true,
+    ...(body.operation==='fit'?{fit:{parameters:['inclination']}}:{})}};
   return {ok:true,status:200,json:async()=>value};
 };
 
@@ -44,4 +48,26 @@ failed.onmessage=event=>failedMessages.push(event.data);failed.postMessage({type
 await flush();await flush();
 assert.equal(failedMessages.at(-1).type,'fatal');assert.match(failedMessages.at(-1).error,/native startup failed/);
 
-console.log('Colab native engine client: initialize, failed startup, compute, fit handshake, surface, cancel passed');
+failStatus=false;htmlStatus=true;
+const htmlStartup=createScientificEngine(new URL('file:///unused-worker.js'));const htmlStartupMessages=[];
+htmlStartup.onmessage=event=>htmlStartupMessages.push(event.data);htmlStartup.postMessage({type:'initialize'});
+await flush();await flush();
+assert.equal(htmlStartupMessages.at(-1).type,'fatal');assert.match(htmlStartupMessages.at(-1).error,/valid JSON/);
+
+htmlStatus=false;htmlOperation='compute';
+const malformed=createScientificEngine(new URL('file:///unused-worker.js'));const malformedMessages=[];
+malformed.onmessage=event=>malformedMessages.push(event.data);
+malformed.postMessage({type:'compute',id:'bad-compute',payload:{mode:'contact'}});
+await flush();await flush();
+assert.equal(malformedMessages.at(-1).type,'error');assert.match(malformedMessages.at(-1).error,/valid JSON/);
+assert(!malformedMessages.some(message=>message.type==='result'));
+
+htmlOperation=null;emptyOperation='surface';
+const incomplete=createScientificEngine(new URL('file:///unused-worker.js'));const incompleteMessages=[];
+incomplete.onmessage=event=>incompleteMessages.push(event.data);
+incomplete.postMessage({type:'surface',id:'bad-surface',payload:{mode:'contact'}});
+await flush();await flush();
+assert.equal(incompleteMessages.at(-1).type,'surface_error');assert.match(incompleteMessages.at(-1).error,/invalid surface mesh/);
+assert(!incompleteMessages.some(message=>message.type==='surface_result'));
+
+console.log('Colab native engine client: normal flows plus HTTP-error and malformed-success rejection passed');

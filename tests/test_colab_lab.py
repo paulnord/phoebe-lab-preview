@@ -105,6 +105,10 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "canOpenAdvancedWorkspace(nativeKernelConfig)" in app
     assert "isNativeProjectJson(project)" in app
     assert "Native PHOEBE project files are intentionally disabled in Colab" in mode
+    assert "native PHOEBE running" in app and "s elapsed" in app
+    assert "calculating first 5 phases" in app  # Standalone progressive worker retains its accurate status.
+    assert "without a valid JSON response" in client
+    assert "incomplete ${operation} result" in client and "incomplete surface mesh" in client
     assert "nativeKernelConfig ? new ColabNativeEngine" in client
     assert "new Worker(workerURL,{type:'module'})" in client
     assert "PHOEBE_COLAB_NATIVE" not in html

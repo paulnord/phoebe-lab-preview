@@ -708,8 +708,11 @@ function requestModel(type='compute',fit=[]) {
     elapsedTimer=setInterval(()=>{
       if(state.current?.id!==id || state.revision!==revision){clearInterval(elapsedTimer);return;}
       const seconds=Math.floor((performance.now()-started)/1000);
-      const stage=exactPartial ? `${exactPartial.phases.length} of ${plotCount} phases` : 'calculating first 5 phases';
-      status('Exact surface physics · '+stage+' · '+seconds+' s','busy');
+      if(nativeKernelConfig)status(`Exact surface physics · native PHOEBE running · ${seconds} s elapsed`,'busy');
+      else {
+        const stage=exactPartial ? `${exactPartial.phases.length} of ${plotCount} phases` : 'calculating first 5 phases';
+        status('Exact surface physics · '+stage+' · '+seconds+' s','busy');
+      }
     },1000);
   }
   state.worker.postMessage({type,id,progressive:true,payload:{parameters:{...state.parameters},dataset:state.dataset,quality:state.quality,plot_phases:plotCount,workers:Number($('surface-workers').value),fit_phases:Number($('fit-phases').value),fit}});
