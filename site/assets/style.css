@@ -290,6 +290,25 @@
 .solve-orbit-launch { display: block; padding: 0; border: 0; background: transparent; }
 #model-indicator.status-dot .solve-orbit-launch { display: none; }
 
+/* Geometry is a first-class model choice, not an advanced surface toggle. */
+.geometry-picker { margin: 8px 0 5px; padding: 9px; border: 1px solid #ded9ec; border-radius: 9px; background: #faf9fd; min-width: 0; }
+.geometry-picker legend { padding: 0 5px; color: #6f687a; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.geometry-options { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; }
+.geometry-option { position: relative; min-width: 0; cursor: pointer; }
+.geometry-option input { position: absolute; opacity: 0; pointer-events: none; }
+.geometry-option span { display: flex; min-height: 48px; box-sizing: border-box; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 4px; border: 1px solid #e4e0eb; border-radius: 6px; background: white; text-align: center; }
+.geometry-option strong { font-size: 10px; line-height: 1.15; font-weight: 650; }
+.geometry-option small { color: var(--muted); font-size: 8px; line-height: 1.2; }
+.geometry-option input:checked + span { border-color: #7667ce; background: var(--purple-soft); box-shadow: inset 0 0 0 1px #7667ce; color: #403584; }
+.geometry-option input:focus-visible + span { outline: 2px solid #4431a9; outline-offset: 2px; }
+.geometry-option input:disabled + span { opacity: .55; cursor: not-allowed; }
+.geometry-donor { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 9px 2px 3px; }
+.geometry-donor strong { display: block; font-size: 10px; }
+.geometry-donor small { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }
+.geometry-donor select { max-width: 102px; }
+#geometry-explanation { margin: 7px 2px 0; color: var(--muted); font-size: 9px; line-height: 1.35; }
+@media(max-width:760px){.geometry-picker{max-width:560px;margin-inline:auto}.geometry-option strong{font-size:11px}.geometry-option small,#geometry-explanation{font-size:9px}}
+
 #orbit-dialog { width: min(740px,calc(100% - 20px)); max-height: min(92vh,900px); padding: 16px; overflow: auto; }
 #orbit-dialog .dialog-heading { margin-bottom: 8px; }
 .orbit-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 15px; }

@@ -322,7 +322,7 @@ function renderControls() {
       const zoom=zoomOptions[key];
       if(zoom)addZoom(row,key,label);
       const hint=document.createElement('small');hint.className='parameter-help';hint.textContent=help;row.append(hint);section.append(row);
-      parameterInputs.set(key,{number,range,digits,min,max});
+      parameterInputs.set(key,{number,range,digits,min,max,title,hint});
       const update=(source)=>{
         const inTicks=zoom && source===range && $(key+'-span').value!=='full';
         const entered=source.valueAsNumber;
@@ -393,6 +393,17 @@ function updateControlValues() {
   }
   const mode=modeOf(state.parameters),contact=mode==='contact',semi=mode==='semi';
   $('geometry-'+mode).checked=true;$('donor').value=state.parameters.donor;$('donor-row').hidden=!semi;
+  $('geometry-explanation').textContent=contact
+    ? 'Contact: one fill-out factor controls the connected common envelope.'
+    : semi
+    ? `Semi-detached: the ${state.parameters.donor} fills its Roche lobe; adjust the other star with its one visible radius control.`
+    : 'Detached: adjust both stellar radii independently.';
+  for(const [key,ordinary] of [['radius_primary','Primary radius / separation'],['radius_secondary','Secondary radius / separation']]){
+    const item=parameterInputs.get(key),free=semi && key===(state.parameters.donor==='primary'?'radius_secondary':'radius_primary');
+    const name=free ? `Free ${key==='radius_primary'?'primary':'secondary'} radius / separation` : ordinary;
+    item.title.textContent=name;item.number.setAttribute('aria-label',name);item.range.setAttribute('aria-label',name+' slider');
+    item.hint.textContent=free ? 'The donor is fixed at its Roche lobe; this is the other star’s independent radius.' : key==='radius_primary' ? 'Larger stars generally make broader eclipses.' : 'Compare the eclipse widths and depths.';
+  }
   $('distortion').checked=state.parameters.distortion;$('irradiation').checked=state.parameters.irradiation;
   $('distortion').disabled=mode!=='detached' || state.fitting;
   document.querySelector('[data-parameter="radius_primary"]').hidden=contact || (semi&&state.parameters.donor==='primary');
@@ -402,6 +413,12 @@ function updateControlValues() {
   const freeRadius=state.parameters.donor==='primary'?'radius_secondary':'radius_primary';
   const allowed=contact?new Set(['inclination','fillout_factor','temperature_ratio','mass_ratio']):semi?new Set(['inclination',freeRadius,'temperature_ratio','mass_ratio','period']):null;
   for(const input of document.querySelectorAll('input[name=fit]'))input.closest('label').hidden=allowed?!allowed.has(input.value):input.value==='fillout_factor';
+  document.querySelector('input[name=fit][value="radius_primary"]').closest('label').querySelector('strong').textContent='Primary radius / separation';
+  document.querySelector('input[name=fit][value="radius_secondary"]').closest('label').querySelector('strong').textContent='Secondary radius / separation';
+  if(semi){
+    const freeFit=document.querySelector(`input[name=fit][value="${freeRadius}"]`);
+    freeFit.closest('label').querySelector('strong').textContent=`Free ${freeRadius==='radius_primary'?'primary':'secondary'} radius`;
+  }
   $('fit-scope').textContent=contact
     ? 'Contact fits use inclination, shared fill-out factor, temperature ratio and mass ratio. The final curve, residuals and CSV are recomputed natively at 513 phases.'
     : semi
