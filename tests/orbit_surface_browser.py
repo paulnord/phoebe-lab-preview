@@ -53,7 +53,9 @@ window.Worker=DeterministicWorker;
     page.locator("#effects summary").click()
     page.locator("#geometry-semi").check()
     page.locator(".orbit-launch").click()
+    expect(page.locator("#orbit-detail")).to_have_value("high")
     expect(page.locator("#orbit-shape-note")).to_contain_text("Building the native PHOEBE",timeout=4000)
+    assert page.evaluate("surfaceRequests[0].triangles")==1500
     page.locator("#orbit-close").click()
     # Change donor before the delayed primary result; the stale mesh must not win.
     page.locator("#donor").select_option("secondary")
@@ -66,11 +68,13 @@ window.Worker=DeterministicWorker;
     page.locator("#orbit-phase").evaluate("el=>{el.value='.25';el.dispatchEvent(new Event('input',{bubbles:true}))}")
     after=canvas.evaluate("el=>Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data).reduce((s,v)=>s+v,0)")
     assert before!=after
-    expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail · 500 PHOEBE ntriangles")
-    page.locator("#orbit-detail").select_option("high")
-    expect(page.locator("#orbit-shape-note")).to_contain_text("High detail is regenerating")
     expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 1500 PHOEBE ntriangles",timeout=12000)
     assert page.evaluate("surfaceRequests.at(-1).triangles")==1500
+    page.locator("#orbit-detail").select_option("preview")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail is regenerating")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail · 500 PHOEBE ntriangles",timeout=12000)
+    page.locator("#orbit-detail").select_option("high")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 1500 PHOEBE ntriangles",timeout=12000)
     # Every geometry shares the presets, explicit free-camera controls and drag rotation.
     assert page.locator("#orbit-view option").all_text_contents()==["From Earth","Above orbit","Free orbit camera"]
     page.locator("#orbit-view").select_option("free")

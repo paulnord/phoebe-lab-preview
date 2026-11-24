@@ -26,6 +26,15 @@ def test_geometry_is_visible_first_class_model_choice():
     assert 'id="donor-row"' in html and 'id="geometry-explanation"' in html
 
 
+def test_high_surface_detail_is_the_fresh_viewer_default():
+    html=(ROOT/"site"/"index.html").read_text()
+    app=(ROOT/"site"/"assets"/"app.js").read_text()
+    assert '<option value="high" selected>High detail</option>' in html
+    assert "let orbitDetail='high'" in app
+    assert "detail:'high',displayDetail:null,status:'idle'" in app
+    assert "orbitDetail==='high'?1500:500" in app
+
+
 def test_launcher_serves_the_actual_workbench():
     server = launcher.start_lab(ROOT / "site",kernel=False)
     try:

@@ -38,7 +38,7 @@ const modeOf=p=>p.contact?'contact':p.semidetached?'semi':'detached';
 const modeSnapshots={detached:{...DEFAULTS},semi:null,contact:null};
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
-let orbitDetail='preview',orbitSurface={key:null,geometryKey:null,detail:'preview',displayDetail:null,status:'idle',mesh:null,error:null,id:null},surfaceRequest=0,surfaceTimer;
+let orbitDetail='high',orbitSurface={key:null,geometryKey:null,detail:'high',displayDetail:null,status:'idle',mesh:null,error:null,id:null},surfaceRequest=0,surfaceTimer;
 let drawOrbitViewer=()=>{};
 const exactHistory = new Map();
 const modelHistory=[];
