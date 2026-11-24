@@ -1,5 +1,11 @@
 /* PHOEBE executes here, inside the browser, with no model-computation API. */
-const RUNTIME = new URL("../runtime/", self.location.href).href;
+// Commit-pinned raw.githack previews contain every reviewed source/model file,
+// but generated Pyodide and wheel artifacts are intentionally excluded from
+// git. Only on that preview host, reuse the identical published runtime build.
+// Local builds and GitHub Pages continue to use their own same-origin assets.
+const BRANCH_PREVIEW = self.location.hostname === "raw.githack.com";
+const PUBLISHED_SITE = "https://paulnord.github.io/phoebe-lab-preview/";
+const RUNTIME = BRANCH_PREVIEW ? new URL("runtime/",PUBLISHED_SITE).href : new URL("../runtime/", self.location.href).href;
 let pyodide;
 let initialized = false;
 let activeId = null;
@@ -24,11 +30,12 @@ async function initialize(nativeFiles=false) {
     pyodide.globals.set("_advanced_wheels",JSON.stringify(wheels));
     await pyodide.runPythonAsync("import json, micropip; await micropip.install(json.loads(_advanced_wheels),deps=False)");
   }
-  const manifestURL = new URL("../engine/manifest.json", self.location.href);
+  const manifestURL = BRANCH_PREVIEW ? new URL("engine/manifest.json",PUBLISHED_SITE) : new URL("../engine/manifest.json", self.location.href);
   const response = await fetch(manifestURL);
   if (!response.ok) throw new Error("The PHOEBE WebAssembly packages are missing. Build the browser engine first.");
   const manifest = await response.json();
-  const wheels = manifest.wheels.map((name) => new URL(name, manifestURL).href + `#sha256=${manifest.sha256[name]}`);
+  const wheelBase = BRANCH_PREVIEW ? new URL("engine/",PUBLISHED_SITE) : manifestURL;
+  const wheels = manifest.wheels.map((name) => new URL(name, wheelBase).href + `#sha256=${manifest.sha256[name]}`);
   pyodide.globals.set("_browser_wheels", JSON.stringify(wheels));
   await pyodide.runPythonAsync(`
 import os, json

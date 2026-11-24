@@ -62,3 +62,13 @@ def test_generated_notebook_is_the_familiar_lab_not_widget_replacement():
     assert "show_lab(height=1050)" in source
     assert "LabOverlayHandler" in source
     assert "BinaryFitterApp" not in source and "ToggleButtons" not in source
+
+
+def test_commit_pinned_preview_reuses_only_generated_public_runtime():
+    worker = (ROOT / "site" / "assets" / "engine.worker.js").read_text()
+    assert 'self.location.hostname === "raw.githack.com"' in worker
+    assert 'new URL("runtime/",PUBLISHED_SITE)' in worker
+    assert 'new URL("engine/manifest.json",PUBLISHED_SITE)' in worker
+    # Model and wrapper source must remain the reviewed branch files.
+    assert 'new URL("../engine/model.py", self.location.href)' in worker
+    assert "../engine/advanced.py" in worker and "../engine/native_files.py" in worker

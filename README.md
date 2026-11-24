@@ -7,6 +7,13 @@ runs **real PHOEBE 2.5.4**, including its compiled C++ extensions, through
 Pyodide/WebAssembly. GitHub Pages serves static files only; no PHOEBE server,
 JupyterHub account, API key, or connection to boole is required.
 
+Feature-branch reviews can use a commit-pinned raw.githack URL. The reviewed
+HTML, JavaScript, trained models, and Python solver wrapper come from that exact
+commit. Because generated Pyodide and wheel files are intentionally excluded
+from git, only this preview host reuses the identical runtime artifacts from the
+current public PHOEBE Lab build. Production Pages and local builds remain fully
+same-origin. raw.githack shows a third-party-content notice on first open.
+
 > **Geometry feature branches:** the standalone lab supports geometry-specific Detached, Semi-detached, and Contact previews without deploying from the branch. Geometry is a visible top-level model choice; semi-detached then asks which donor fills its lobe, while contact replaces the two radii with one shared-envelope fill-out factor. Its orbit viewer builds a native phase-zero PHOEBE mesh for constrained systems, then animates the cached co-rotating geometry locally. The [`PHOEBE Lab Colab notebook`](notebooks/PHOEBE_Semi_Detached_Binary_Colab.ipynb) launches this same workbench—observation loading, plots, fit, residuals, export, RVs, and orbit viewer—rather than a separate widget UI. The separate [`semi-detached validation notebook`](notebooks/PHOEBE_Semi_Detached_Validation.ipynb) preserves training-reproducibility checks. Generation and validation live under [`experiments/semi_detached/`](experiments/semi_detached/) and [`experiments/contact/`](experiments/contact/).
 
 ## Use the lab
