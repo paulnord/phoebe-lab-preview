@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from '../site/assets/runtime-mode.mjs';
 
 const elements=new Map([
+  ['engine-pill',{}],['model-status-text',{}],['engine-title',{}],['engine-detail',{}],
   ['engine-runtime',{}],['native-button',{disabled:false,title:''}],['data-file',{accept:'.phoebe'}],
 ]);
 const footer={textContent:'browser'};const formats={textContent:'native files'};
@@ -13,6 +14,10 @@ const doc={
 };
 
 assert.equal(applyColabRuntimeUI(doc,{endpoint:'native'}),true);
+assert.match(elements.get('engine-pill').innerHTML,/Colab native engine/);
+assert.match(elements.get('model-status-text').textContent,/native PHOEBE/);
+assert.match(elements.get('engine-title').textContent,/native PHOEBE in Colab/);
+assert.match(elements.get('engine-detail').textContent,/fallback is disabled/);
 assert.match(elements.get('engine-runtime').innerHTML,/Colab Python runtime/);
 assert.equal(elements.get('native-button').disabled,true);
 assert.equal(elements.get('data-file').accept,'.csv,.tsv,.txt,.dat,.json');

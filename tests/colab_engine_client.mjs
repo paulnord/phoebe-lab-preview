@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 globalThis.PHOEBE_COLAB_NATIVE={endpoint:'http://127.0.0.1:9999/_phoebe_native/'};
-const calls=[];let failStatus=false,htmlStatus=false,htmlOperation=null,emptyOperation=null;
+const calls=[];let failStatus=false,unreachableStatus=false,htmlStatus=false,htmlOperation=null,emptyOperation=null;
 const streamResponse=lines=>{
   const bytes=new TextEncoder().encode(lines.join('\n')+'\n');
   return {ok:true,status:200,body:new ReadableStream({start(controller){controller.enqueue(bytes);controller.close();}})};
@@ -9,6 +9,7 @@ const streamResponse=lines=>{
 globalThis.fetch=async(url,options={})=>{
   const path=new URL(url).pathname;const body=options.body?JSON.parse(options.body):null;
   calls.push({path,body});
+  if(path.endsWith('/status')&&unreachableStatus)throw new TypeError('Failed to fetch');
   if(path.endsWith('/status')&&failStatus)return {ok:false,status:503,json:async()=>({error:'native startup failed'})};
   if(path.endsWith('/stream')&&body?.operation===htmlOperation)return streamResponse(['<html>not json</html>']);
   if(path.endsWith('/status')&&htmlStatus)
@@ -73,7 +74,13 @@ failed.onmessage=event=>failedMessages.push(event.data);failed.postMessage({type
 await flush();await flush();
 assert.equal(failedMessages.at(-1).type,'fatal');assert.match(failedMessages.at(-1).error,/native startup failed/);
 
-failStatus=false;htmlStatus=true;
+failStatus=false;unreachableStatus=true;
+const unreachable=createScientificEngine(new URL('file:///unused-worker.js'));const unreachableMessages=[];
+unreachable.onmessage=event=>unreachableMessages.push(event.data);unreachable.postMessage({type:'initialize'});
+await flush();await flush();
+assert.equal(unreachableMessages.at(-1).type,'fatal');assert.match(unreachableMessages.at(-1).error,/Failed to fetch/);
+
+unreachableStatus=false;htmlStatus=true;
 const htmlStartup=createScientificEngine(new URL('file:///unused-worker.js'));const htmlStartupMessages=[];
 htmlStartup.onmessage=event=>htmlStartupMessages.push(event.data);htmlStartup.postMessage({type:'initialize'});
 await flush();await flush();

@@ -1,5 +1,7 @@
 /* Select the scientific transport without changing the shared PHOEBE Lab UI. */
 export const nativeKernelConfig = globalThis.PHOEBE_COLAB_NATIVE || null;
+export const nativeKernelRequired = Boolean(nativeKernelConfig) || globalThis.PHOEBE_COLAB_NATIVE_REQUIRED===true ||
+  globalThis.document?.querySelector?.('meta[name="phoebe-compute-backend"]')?.content==='colab-native-required';
 
 const record=(value,label)=>{
   if(!value || typeof value!=='object' || Array.isArray(value))throw Error(`Native kernel returned an invalid ${label} response.`);
@@ -112,6 +114,20 @@ class ColabNativeEngine {
   }
 }
 
+class MissingColabNativeEngine {
+  constructor(){this.onmessage=null;this.onerror=null;}
+  emit(data){queueMicrotask(()=>this.onmessage?.({data}));}
+  postMessage(data){
+    const error='The Colab native PHOEBE bridge is missing. Exact compute and fit are disabled; browser WebAssembly fallback is forbidden in Colab.';
+    if(data.type==='initialize')this.emit({type:'fatal',error});
+    else if(['compute','fit'].includes(data.type))this.emit({type:'error',id:data.id,error});
+    else if(data.type==='surface')this.emit({type:'surface_error',id:data.id,error});
+  }
+  terminate(){}
+}
+
 export function createScientificEngine(workerURL){
-  return nativeKernelConfig ? new ColabNativeEngine(nativeKernelConfig) : new Worker(workerURL,{type:'module'});
+  if(nativeKernelConfig)return new ColabNativeEngine(nativeKernelConfig);
+  if(nativeKernelRequired)return new MissingColabNativeEngine();
+  return new Worker(workerURL,{type:'module'});
 }

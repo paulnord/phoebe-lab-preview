@@ -85,7 +85,8 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
     try:
         base=f"http://127.0.0.1:{server.server_address[1]}"
         index=urllib.request.urlopen(base+"/",timeout=5).read().decode()
-        assert "PHOEBE_COLAB_NATIVE" in index and "_phoebe_native/" in index
+        assert "PHOEBE_COLAB_NATIVE" in index and "PHOEBE_COLAB_NATIVE_REQUIRED" in index
+        assert 'content="colab-native-required"' in index and "_phoebe_native/" in index
         status=json.load(urllib.request.urlopen(base+"/_phoebe_native/status",timeout=5))
         assert status["backend"]=="native-python" and status["version"]=="2.5.4"
         body=json.dumps({"id":"job-7","operation":"compute","payload":{"geometry":"contact"}}).encode()
@@ -100,6 +101,12 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
         updates=[json.loads(line) for line in urllib.request.urlopen(stream_request,timeout=5) if line.strip()]
         assert [update["type"] for update in updates]==["partial","result"]
         assert kernel.calls[-1]==("job-8","compute",{"geometry":"semi"},"stream")
+        fit_body=json.dumps({"id":"job-9","operation":"fit","payload":{"fit":["inclination"]}}).encode()
+        fit_request=urllib.request.Request(base+"/_phoebe_native/stream",data=fit_body,
+                                           headers={"Content-Type":"application/json"})
+        fit_updates=[json.loads(line) for line in urllib.request.urlopen(fit_request,timeout=5) if line.strip()]
+        assert [update["type"] for update in fit_updates]==["partial","result"]
+        assert kernel.calls[-1]==("job-9","fit",{"fit":["inclination"]},"stream")
     finally: launcher.stop_lab()
 
 
@@ -108,18 +115,20 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     client=(ROOT / "site" / "assets" / "engine-client.mjs").read_text()
     mode=(ROOT / "site" / "assets" / "runtime-mode.mjs").read_text()
     html=(ROOT / "site" / "index.html").read_text()
-    assert "createScientificEngine" in app and "nativeKernelConfig" in app
+    assert "createScientificEngine" in app and "nativeKernelConfig" in app and "nativeKernelRequired" in app
     assert "Colab native engine ready" in app and "Browser engine ready" in app
     assert "engine_runtime" in app and "Colab native Python" in app and "Browser WebAssembly" in app
-    assert "applyColabRuntimeUI(document,nativeKernelConfig)" in app
-    assert "canOpenAdvancedWorkspace(nativeKernelConfig)" in app
+    assert "applyColabRuntimeUI(document,colabNativeMode)" in app
+    assert "canOpenAdvancedWorkspace(colabNativeMode)" in app
     assert "isNativeProjectJson(project)" in app
     assert "Native PHOEBE project files are intentionally disabled in Colab" in mode
     assert "native PHOEBE running" in app and "s elapsed" in app
     assert "calculating first 5 phases" in app  # Standalone progressive worker retains its accurate status.
     assert "without a valid JSON response" in client
     assert "incomplete ${operation} result" in client and "incomplete surface mesh" in client
-    assert "nativeKernelConfig ? new ColabNativeEngine" in client
+    assert "if(nativeKernelConfig)return new ColabNativeEngine" in client
+    assert "if(nativeKernelRequired)return new MissingColabNativeEngine" in client
+    assert "browser WebAssembly fallback is forbidden in Colab" in client
     assert "new Worker(workerURL,{type:'module'})" in client
     assert "PHOEBE_COLAB_NATIVE" not in html
     assert "application/x-ndjson" in (ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()

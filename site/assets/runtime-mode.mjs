@@ -5,6 +5,10 @@ export const isNativeProjectJson=value=>Array.isArray(value);
 
 export function applyColabRuntimeUI(doc,config){
   if(!config)return false;
+  doc.getElementById('engine-pill').innerHTML='<span class="status-dot loading"></span>Connecting to Colab native engine';
+  doc.getElementById('model-status-text').textContent='Connecting to native PHOEBE in this Colab runtime…';
+  doc.getElementById('engine-title').textContent='Connecting to native PHOEBE in Colab';
+  doc.getElementById('engine-detail').textContent='Exact curves, fits, and surfaces use this notebook’s Python process. Browser WebAssembly fallback is disabled.';
   doc.getElementById('engine-runtime').innerHTML='Calculated by <a href="https://phoebe-project.org/" target="_blank" rel="noreferrer">PHOEBE 2.5.4</a> in this Colab Python runtime';
   doc.querySelector('footer span:last-child').textContent='Uploaded observations stay in this Colab session.';
   const nativeButton=doc.getElementById('native-button');

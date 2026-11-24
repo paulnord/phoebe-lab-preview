@@ -171,7 +171,7 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
 
     def _serve_colab_index(self):
         text=(Path(self.directory)/"index.html").read_text()
-        config='<script>globalThis.PHOEBE_COLAB_NATIVE={endpoint:new URL("./_phoebe_native/",location.href).href};</script>'
+        config='<meta name="phoebe-compute-backend" content="colab-native-required"><script>globalThis.PHOEBE_COLAB_NATIVE_REQUIRED=true;globalThis.PHOEBE_COLAB_NATIVE={endpoint:new URL("./_phoebe_native/",location.href).href};</script>'
         data=text.replace("</head>",config+"\n</head>").encode()
         self.send_response(200);self.send_header("Content-Type","text/html; charset=utf-8")
         self.send_header("Content-Length",str(len(data)));self.send_header("Cache-Control","no-store")
