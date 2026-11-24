@@ -47,7 +47,7 @@ lab_server = show_lab(height=1050)
 - **Local Jupyter/classic:** supported when the browser and kernel share the same computer. Run the notebook from a repository checkout to use its local `site/` files.
 - **Remote JupyterLab:** direct loopback iframes may be blocked by the deployment. Use Colab or the standalone page unless that server provides a loopback proxy.
 - **Standalone preview:** uses PHOEBE WebAssembly in its browser worker, independently of this notebook's native bridge.
-- **Fullscreen:** the workbench asks the browser for fullscreen and the Colab iframe explicitly requests that permission. If the host denies it, the interface reports the limitation without changing compute backends.
+- **Fullscreen:** the workbench asks the browser for fullscreen. Colab's supported kernel-port iframe may deny that browser permission; if so, the interface reports the limitation without changing compute backends.
 - **Full window:** Colab's direct kernel-port window helper is deprecated because browser security changes can break it, so this notebook does not advertise an unreliable app-only popup. The inline workbench remains connected to this kernel.
 - Use `PHOEBE_Semi_Detached_Validation.ipynb` for training reproducibility and this notebook for interactive fitting.
 """),

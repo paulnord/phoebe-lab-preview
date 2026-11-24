@@ -23,8 +23,6 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-from IPython.display import Javascript, display
-
 SOURCE_ARCHIVE = "https://github.com/paulnord/phoebe-lab-preview/archive/refs/heads/semi-detached.zip"
 PUBLISHED_BASE = "https://paulnord.github.io/phoebe-lab-preview/"
 _server = None
@@ -236,21 +234,6 @@ def start_lab(site=None, kernel=None):
     return _server
 
 
-def _display_colab_iframe(port, height):
-    """Render the authenticated kernel proxy and explicitly request fullscreen permission."""
-    code = f"""(async (port, height, element) => {{
-      if (!google.colab.kernel.accessAllowed) return;
-      const url = await google.colab.kernel.proxyPort(port);
-      const iframe = document.createElement('iframe');
-      iframe.src = new URL('/', url).toString();
-      iframe.width = '100%'; iframe.height = height; iframe.style.border = 0;
-      iframe.allow = 'fullscreen; clipboard-read; clipboard-write';
-      iframe.setAttribute('allowfullscreen', '');
-      element.appendChild(iframe);
-    }})({port}, {json.dumps(str(height))}, window.element);"""
-    display(Javascript(code))
-
-
 def show_lab(height=1050, site=None):
     """Display the PHOEBE Lab workbench served by this notebook kernel."""
     server = start_lab(site)
@@ -261,7 +244,7 @@ def show_lab(height=1050, site=None):
         from IPython.display import IFrame, display
         display(IFrame(src=f"http://127.0.0.1:{port}/", width="100%", height=height))
     else:
-        _display_colab_iframe(port, height)
+        output.serve_kernel_port_as_iframe(port, height=height)
     return server
 
 

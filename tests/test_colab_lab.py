@@ -3,7 +3,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import threading
+import types
 import urllib.error
 import urllib.request
 
@@ -78,6 +80,22 @@ def test_generated_notebook_exposes_full_lab_and_native_runtime():
     assert "Runtime → Run all" in source
 
 
+def test_colab_launch_uses_supported_kernel_port_iframe(monkeypatch):
+    calls=[]
+    server=types.SimpleNamespace(server_address=("127.0.0.1",43210))
+    monkeypatch.setattr(launcher,"start_lab",lambda site=None: server)
+    output=types.SimpleNamespace(
+        serve_kernel_port_as_iframe=lambda port, *, height: calls.append((port,height)))
+    google=types.ModuleType("google")
+    colab=types.ModuleType("google.colab")
+    colab.output=output;google.colab=colab
+    monkeypatch.setitem(sys.modules,"google",google)
+    monkeypatch.setitem(sys.modules,"google.colab",colab)
+
+    assert launcher.show_lab(height=777,site=ROOT/"site") is server
+    assert calls==[(43210,777)]
+
+
 def test_colab_overlay_injects_native_transport_and_routes_requests():
     class FakeKernel:
         def __init__(self): self.calls=[]
@@ -148,8 +166,9 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "window.open(location.href" in app and "opened.opener=null" in app
     assert "windowButton.disabled=true" in mode
     launcher=(ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()
-    assert "google.colab.kernel.proxyPort" in launcher
-    assert "allowfullscreen" in launcher and "fullscreen; clipboard-read" in launcher
+    assert "output.serve_kernel_port_as_iframe(port, height=height)" in launcher
+    assert "google.colab.kernel.proxyPort" not in launcher
+    assert "_display_colab_iframe" not in launcher
     assert "serve_kernel_port_as_window" not in launcher
 
 
