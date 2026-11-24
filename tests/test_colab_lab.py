@@ -105,10 +105,23 @@ def test_colab_launch_uses_supported_kernel_port_iframe(monkeypatch):
     assert calls==[(43210,777)]
 
 
+def test_colab_reports_affinity_quota_separately_from_supported_workers(monkeypatch):
+    monkeypatch.setattr(launcher.os,"sched_getaffinity",lambda pid:set(range(6)))
+    monkeypatch.setattr(launcher,"_cgroup_cpu_quota",lambda:2.5)
+    assert launcher.detected_cpu_capacity()=={
+        "affinity_cpus":6,"cgroup_quota_cpus":2.5,"usable_cpu_equivalents":2.5}
+    source=(ROOT/"notebooks"/"phoebe_lab_colab.py").read_text()
+    assert '"supported_workers":1' in source
+    assert "requested unexpected parallel work" in source
+    assert "dict(payload,workers=1)" in source
+
+
 def test_colab_overlay_injects_native_transport_and_routes_requests():
     class FakeKernel:
         def __init__(self): self.calls=[]
-        def status(self): return {"backend":"native-python","version":"2.5.4","pid":123}
+        def status(self): return {"backend":"native-python","version":"2.5.4","pid":123,
+                                  "cpu_capacity":{"affinity_cpus":4,"cgroup_quota_cpus":2.,"usable_cpu_equivalents":2.},
+                                  "supported_workers":1}
         def cancel(self, job_id): self.calls.append(("cancel",job_id))
         def run(self, job_id, operation, payload):
             self.calls.append((job_id,operation,payload))
@@ -125,6 +138,7 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
         assert 'content="colab-native-required"' in index and "_phoebe_native/" in index
         status=json.load(urllib.request.urlopen(base+"/_phoebe_native/status",timeout=5))
         assert status["backend"]=="native-python" and status["version"]=="2.5.4"
+        assert status["supported_workers"]==1 and status["cpu_capacity"]["usable_cpu_equivalents"]==2.
         body=json.dumps({"id":"job-7","operation":"compute","payload":{"geometry":"contact"}}).encode()
         request=urllib.request.Request(base+"/_phoebe_native/run",data=body,
                                        headers={"Content-Type":"application/json"})
@@ -175,8 +189,9 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "window.open(location.href" in app and "opened.opener=null" in app
     assert "windowButton.disabled=true" in mode
     assert "workers.value='1'" in mode and "workers.hidden=true" in mode
-    assert "Fixed at one PHOEBE worker" in mode and "1 native worker" in mode
-    assert "disabled=colabNativeMode||fitting" in app
+    assert "applyColabWorkerStatus" in mode and "1 native worker" in mode
+    assert "usable CPU equivalent" in mode and "Native phase streaming currently supports" in mode
+    assert "dataset.supportedWorkers" in app and "applyColabWorkerStatus(document,data)" in app
     assert 'View / orientation <select id="orbit-view"' in html
     launcher=(ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()
     assert "output.serve_kernel_port_as_iframe(port, height=height)" in launcher

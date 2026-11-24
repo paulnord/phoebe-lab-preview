@@ -3,6 +3,20 @@ export const NATIVE_PROJECT_ERROR='Native PHOEBE project files are intentionally
 export const canOpenAdvancedWorkspace=config=>!config;
 export const isNativeProjectJson=value=>Array.isArray(value);
 
+export function applyColabWorkerStatus(doc,info){
+  const workers=doc.getElementById('surface-workers'),workerRow=workers.closest('label');
+  const supported=Math.max(1,Math.floor(Number(info?.supported_workers)||1));
+  workers.dataset.supportedWorkers=String(supported);workers.replaceChildren();
+  for(let value=1;value<=supported;value++){const option=doc.createElement('option');option.value=option.textContent=String(value);workers.append(option);}
+  workers.value='1';workers.hidden=supported===1;workers.disabled=supported===1;
+  const workerValue=doc.getElementById('surface-workers-value');workerValue.hidden=supported>1;
+  workerValue.textContent=supported===1?'1 native worker':`${supported} native workers available`;
+  const capacity=info?.cpu_capacity||{},usable=Number(capacity.usable_cpu_equivalents),affinity=Number(capacity.affinity_cpus),quota=capacity.cgroup_quota_cpus;
+  const detected=Number.isFinite(usable)?`${usable} usable CPU equivalent${usable===1?'':'s'} detected`:'runtime CPU capacity unavailable';
+  const limit=Number.isFinite(affinity)?` (${affinity} affinity CPU${affinity===1?'':'s'}${quota==null?'':`, ${quota} quota`})`:'';
+  workerRow.querySelector('small').textContent=`${detected}${limit}. Native phase streaming currently supports ${supported} worker${supported===1?'':'s'}.`;
+}
+
 export function applyColabRuntimeUI(doc,config){
   if(!config)return false;
   doc.getElementById('engine-pill').innerHTML='<span class="status-dot loading"></span>Connecting to Colab native engine';
@@ -16,9 +30,9 @@ export function applyColabRuntimeUI(doc,config){
   const windowButton=doc.getElementById('window-button');
   windowButton.disabled=true;windowButton.title='Colab no longer provides a reliable app-only kernel-port window. Fullscreen remains available when the host grants iframe permission.';
   const workers=doc.getElementById('surface-workers'),workerRow=workers.closest('label');
-  workers.value='1';workers.disabled=true;workers.hidden=true;
+  workers.value='1';workers.dataset.supportedWorkers='1';workers.disabled=true;workers.hidden=true;
   workerRow.querySelector('strong').textContent='Native compute worker';
-  workerRow.querySelector('small').textContent='Fixed at one PHOEBE worker in this notebook runtime.';
+  workerRow.querySelector('small').textContent='Detecting runtime CPU capacity; native phase streaming currently supports one worker.';
   const workerValue=doc.createElement('span');workerValue.id='surface-workers-value';workerValue.className='mono';workerValue.textContent='1 native worker';workerRow.append(workerValue);
   doc.getElementById('data-file').accept='.csv,.tsv,.txt,.dat,.json';
   doc.querySelector('label[for="data-file"] span:last-of-type').textContent='CSV, TSV, TXT, or PHOEBE Lab session JSON';

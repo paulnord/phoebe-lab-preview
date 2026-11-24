@@ -30,6 +30,32 @@ _thread = None
 _download_root = None
 
 
+def _cgroup_cpu_quota():
+    """Return the cgroup CPU quota as CPU equivalents, when one is configured."""
+    try:
+        v2=Path("/sys/fs/cgroup/cpu.max")
+        if v2.is_file():
+            quota,period=v2.read_text().split()[:2]
+            if quota!="max" and float(period)>0:return float(quota)/float(period)
+        quota_path=Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+        period_path=Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+        if quota_path.is_file() and period_path.is_file():
+            quota=float(quota_path.read_text());period=float(period_path.read_text())
+            if quota>0 and period>0:return quota/period
+    except (OSError,ValueError,IndexError):
+        pass
+    return None
+
+
+def detected_cpu_capacity():
+    """Report scheduling capacity separately from native-engine worker support."""
+    affinity=len(os.sched_getaffinity(0)) if hasattr(os,"sched_getaffinity") else int(os.cpu_count() or 1)
+    quota=_cgroup_cpu_quota()
+    usable=min(float(affinity),quota) if quota is not None else float(affinity)
+    return {"affinity_cpus":affinity,"cgroup_quota_cpus":None if quota is None else round(quota,3),
+            "usable_cpu_equivalents":round(max(0.001,usable),3)}
+
+
 class NativeKernel:
     """Serialize the shared UI's heavy work through native PHOEBE in Python."""
     def __init__(self, site):
@@ -42,7 +68,8 @@ class NativeKernel:
 
     def status(self):
         return {"backend":"native-python", "version":self.model.phoebe.__version__,
-                "runtime":f"{sys.executable} · Python {sys.version.split()[0]}", "pid":os.getpid()}
+                "runtime":f"{sys.executable} · Python {sys.version.split()[0]}", "pid":os.getpid(),
+                "cpu_capacity":detected_cpu_capacity(),"supported_workers":1}
 
     def cancel(self, job_id):
         with self.jobs_lock:

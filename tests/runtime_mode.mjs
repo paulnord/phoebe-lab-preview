@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
-import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from '../site/assets/runtime-mode.mjs';
+import {applyColabRuntimeUI,applyColabWorkerStatus,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from '../site/assets/runtime-mode.mjs';
 
-const elements=new Map([
+const workerSmall={textContent:''},workerStrong={textContent:''};
+let elements;
+const workerRow={querySelector:selector=>selector==='small'?workerSmall:workerStrong,
+  append:child=>elements.set(child.id,child)};
+const workers={value:'8',disabled:false,hidden:false,dataset:{},children:[],closest:()=>workerRow,
+  replaceChildren(){this.children=[];},append(child){this.children.push(child);}};
+elements=new Map([
   ['engine-pill',{}],['model-status-text',{}],['engine-title',{}],['engine-detail',{}],
-  ['engine-runtime',{}],['native-button',{disabled:false,title:''}],['data-file',{accept:'.phoebe'}],
+  ['engine-runtime',{}],['native-button',{disabled:false,title:''}],['window-button',{disabled:false,title:''}],
+  ['surface-workers',workers],['data-file',{accept:'.phoebe'}],
 ]);
 const footer={textContent:'browser'};const formats={textContent:'native files'};
 const guide={textContent:'What is actually running? Browser WebAssembly.',innerHTML:''};
 const doc={
   getElementById:id=>elements.get(id),
-  querySelector:selector=>selector==='footer span:last-child'?footer:formats,
+  createElement:tag=>({tag,hidden:false,textContent:'',className:'',id:'',value:''}),
+  querySelector:selector=>selector==='footer span:last-child'?footer:selector.startsWith('label[')?formats:formats,
   querySelectorAll:selector=>selector==='#guide-dialog p'?[guide]:[],
 };
 
@@ -24,6 +32,11 @@ assert.equal(elements.get('data-file').accept,'.csv,.tsv,.txt,.dat,.json');
 assert.match(formats.textContent,/PHOEBE Lab session JSON/);
 assert.match(guide.innerHTML,/native Python process/);
 assert.equal(footer.textContent,'Uploaded observations stay in this Colab session.');
+assert.equal(workers.hidden,true);assert.equal(workers.disabled,true);
+
+applyColabWorkerStatus(doc,{cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:2.5,usable_cpu_equivalents:2.5},supported_workers:1});
+assert.equal(workers.dataset.supportedWorkers,'1');assert.equal(workers.children.length,1);
+assert.match(workerSmall.textContent,/2.5 usable CPU equivalents detected/);assert.match(workerSmall.textContent,/supports 1 worker/);
 
 const untouched={getElementById:()=>{throw Error('standalone DOM must remain untouched');}};
 assert.equal(applyColabRuntimeUI(untouched,null),false);

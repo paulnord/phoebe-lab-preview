@@ -29,7 +29,8 @@ globalThis.fetch=async(url,options={})=>{
     ]);
   }
   let value;
-  if(path.endsWith('/status'))value={backend:'native-python',version:'2.5.4',runtime:'test-python'};
+  if(path.endsWith('/status'))value={backend:'native-python',version:'2.5.4',runtime:'test-python',
+    cpu_capacity:{affinity_cpus:4,cgroup_quota_cpus:2,usable_cpu_equivalents:2},supported_workers:1};
   else if(path.endsWith('/cancel'))value={cancelled:true};
   else if(body.operation==='surface')value={value:{source:'native PHOEBE 2.5.4',geometry:'contact',neck:.1,components:[{name:'primary'},{name:'secondary'}]}};
   else value={result:{parameters:{inclination:85},phases:[-.5,.5],model:[1,1],native_python:true,
@@ -45,6 +46,7 @@ const flush=()=>new Promise(resolve=>setTimeout(resolve,0));
 
 engine.postMessage({type:'initialize'});await flush();await flush();
 assert.equal(messages.at(-1).type,'ready');assert.equal(messages.at(-1).location,'colab-native');
+assert.equal(messages.at(-1).cpu_capacity.usable_cpu_equivalents,2);assert.equal(messages.at(-1).supported_workers,1);
 
 engine.postMessage({type:'compute',id:'c1',payload:{mode:'detached'}});await flush();await flush();
 assert.equal(messages.at(-1).type,'partial');

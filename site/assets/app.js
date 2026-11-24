@@ -5,7 +5,7 @@ import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity
 import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
 import {requestMatches} from './request-guard.mjs?v=geometry1';
 import {createScientificEngine,nativeKernelConfig,nativeKernelRequired} from './engine-client.mjs?v=colab-native2';
-import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-ui1';
+import {applyColabRuntimeUI,applyColabWorkerStatus,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-capacity1';
 import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
 const $ = (id) => document.getElementById(id);
 const colabNativeMode=nativeKernelRequired;
@@ -581,7 +581,7 @@ function setBusy(busy,fitting=false) {
   $('stop-button').hidden=!busy;
   document.querySelectorAll('.quality').forEach(button=>{button.disabled=fitting;});
   $('tidal-phases').disabled=fitting;
-  $('surface-workers').disabled=colabNativeMode||fitting;Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
+  $('surface-workers').disabled=fitting||(colabNativeMode&&Number($('surface-workers').dataset.supportedWorkers||1)<=1);Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
   $('example-choice').disabled=fitting;
   $('import-button').disabled=fitting;$('example-button').disabled=fitting || modeOf(state.parameters)!=='detached';$('reset-button').disabled=fitting;
   for(const {number,range} of parameterInputs.values()) {number.disabled=fitting;if(range)range.disabled=fitting;}
@@ -607,6 +607,7 @@ function startEngine() {
     if(data.type==='status') {$('engine-title').textContent=data.title;$('engine-detail').textContent=data.detail;return;}
     if(data.type==='ready') {
       state.ready=true;$('engine-banner').hidden=true;
+      if(colabNativeMode)applyColabWorkerStatus(document,data);
       $('engine-pill').innerHTML=colabNativeMode?'<span class="status-dot"></span>Colab native engine ready':'<span class="status-dot"></span>Browser engine ready';
       requestModel('compute');scheduleOrbitSurface();return;
     }

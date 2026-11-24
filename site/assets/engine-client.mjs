@@ -11,6 +11,11 @@ const finiteArray=value=>Array.isArray(value) && value.length>=2 && value.every(
 const validateStatus=value=>{
   const info=record(value,'status');
   if(info.backend!=='native-python' || typeof info.version!=='string' || !info.version)throw Error('Native kernel status did not identify the native Python PHOEBE backend.');
+  const capacity=record(info.cpu_capacity,'CPU capacity');
+  if(!Number.isInteger(info.supported_workers) || info.supported_workers<1 ||
+      !Number.isInteger(capacity.affinity_cpus) || capacity.affinity_cpus<1 ||
+      !Number.isFinite(capacity.usable_cpu_equivalents) || capacity.usable_cpu_equivalents<=0)
+    throw Error('Native kernel status did not identify its usable CPU and worker capacity.');
   return info;
 };
 const validateCurve=(value,operation)=>{
@@ -92,7 +97,7 @@ class ColabNativeEngine {
   postMessage(data){
     if(data.type==='initialize'){
       this.emit({type:'status',title:'Connecting to Colab Python',detail:'Exact PHOEBE work runs in this notebook runtime, not in browser WebAssembly.'});
-      this.request('status').then(validateStatus).then(info=>this.emit({type:'ready',version:info.version,location:'colab-native',runtime:info.runtime}))
+      this.request('status').then(validateStatus).then(info=>this.emit({type:'ready',version:info.version,location:'colab-native',runtime:info.runtime,cpu_capacity:info.cpu_capacity,supported_workers:info.supported_workers}))
         .catch(error=>this.emit({type:'fatal',error:String(error)}));return;
     }
     if(data.type==='release'){this.cancel(data.id);return;}
