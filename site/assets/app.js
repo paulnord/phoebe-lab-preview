@@ -573,7 +573,7 @@ function requestOrbitSurface() {
   if(!state.ready || state.busy){surfaceTimer=setTimeout(requestOrbitSurface,400);return;}
   const id=`surface-${++surfaceRequest}`;
   orbitSurface={...orbitSurface,key,geometryKey,detail:orbitDetail,status:'pending',error:null,id};drawOrbitViewer();
-  state.worker.postMessage({type:'surface',id,payload:{parameters:{...state.parameters},triangles:orbitDetail==='high'?800:500}});
+  state.worker.postMessage({type:'surface',id,payload:{parameters:{...state.parameters},triangles:orbitDetail==='high'?1500:500}});
 }
 function setBusy(busy,fitting=false) {
   state.busy=busy;state.fitting=fitting;updateHistoryButtons();

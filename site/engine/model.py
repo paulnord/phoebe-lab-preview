@@ -265,8 +265,8 @@ def surface_mesh(payload):
     if not (p["contact"] or p["semidetached"]):
         raise ValueError("Native constrained surfaces are available for semi-detached or contact geometry.")
     requested = payload.get("triangles", 500)
-    if type(requested) is not int or requested not in (300, 500, 800):
-        raise ValueError("Choose 300, 500 or 800 surface triangles.")
+    if type(requested) is not int or requested not in (300, 500, 800, 1500):
+        raise ValueError("Choose 300, 500, 800 or 1500 surface triangles.")
     keys = ["contact", "semidetached", "donor", "mass_ratio", "period",
             "inclination", "temperature_ratio", "fillout_factor",
             "radius_primary", "radius_secondary"]

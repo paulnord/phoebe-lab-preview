@@ -34,7 +34,7 @@ class DeterministicWorker {
    const p=message.payload.parameters,triangles=message.payload.triangles;window.surfaceRequests.push({id:message.id,donor:p.donor,contact:p.contact,triangles});
    if(window.failNextSurface){window.failNextSurface=false;this.emit({type:'surface_error',id:message.id,error:'synthetic mesh failure'},40);return;}
    const mesh=p.contact?contact(triangles):semi(p.donor,triangles);window.surfaceMeshes.push(mesh);
-   this.emit({type:'surface_result',id:message.id,value:mesh},triangles===800?220:p.donor==='primary'&&!p.contact?220:70);return;
+   this.emit({type:'surface_result',id:message.id,value:mesh},triangles===1500?220:p.donor==='primary'&&!p.contact?220:70);return;
   }
   if(message.type==='compute'||message.type==='fit'){
    const p=message.payload.parameters,n=p.contact||p.semidetached?129:513;
@@ -69,8 +69,8 @@ window.Worker=DeterministicWorker;
     expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail · 500 PHOEBE ntriangles")
     page.locator("#orbit-detail").select_option("high")
     expect(page.locator("#orbit-shape-note")).to_contain_text("High detail is regenerating")
-    expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 800 PHOEBE ntriangles",timeout=12000)
-    assert page.evaluate("surfaceRequests.at(-1).triangles")==800
+    expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 1500 PHOEBE ntriangles",timeout=12000)
+    assert page.evaluate("surfaceRequests.at(-1).triangles")==1500
     # Every geometry shares the presets, explicit free-camera controls and drag rotation.
     assert page.locator("#orbit-view option").all_text_contents()==["From Earth","Above orbit","Free orbit camera"]
     page.locator("#orbit-view").select_option("free")

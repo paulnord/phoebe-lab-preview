@@ -55,8 +55,17 @@ def test_native_contact_surface_is_connected_at_neck_and_cached():
 def test_native_surface_detail_has_more_real_facets():
     m=load_engine();p=values("primary")
     preview=m.surface_mesh({"parameters":p,"triangles":300})
-    high=m.surface_mesh({"parameters":p,"triangles":800})
+    high=m.surface_mesh({"parameters":p,"triangles":1500})
     preview_count=sum(len(component["triangles"]) for component in preview["components"])
     high_count=sum(len(component["triangles"]) for component in high["components"])
-    assert preview["triangles_actual"]==300 and high["triangles_actual"]==800
+    assert preview["triangles_actual"]==300 and high["triangles_actual"]==1500
+    assert high_count>preview_count
+
+def test_contact_preview_and_high_detail_do_not_collapse_to_same_mesh():
+    m=load_engine();p=dict(values("primary"),contact=True,semidetached=False,fillout_factor=.25)
+    preview=m.surface_mesh({"parameters":p,"triangles":500})
+    high=m.surface_mesh({"parameters":p,"triangles":1500})
+    preview_count=sum(len(component["triangles"]) for component in preview["components"])
+    high_count=sum(len(component["triangles"]) for component in high["components"])
+    assert high["triangles_actual"]>preview["triangles_actual"]
     assert high_count>preview_count
