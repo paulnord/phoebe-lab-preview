@@ -315,8 +315,14 @@
 .orbit-controls label { font-size: 12px; }
 .orbit-controls select { padding: 5px; border: 1px solid var(--line); background: white; }
 .orbit-controls .button { min-width: 70px; justify-content: center; padding: 7px 12px; }
+.orbit-camera { flex: 1 1 100%; display: grid; grid-template-columns: minmax(150px,1fr) minmax(150px,1fr) auto; align-items: center; gap: 6px 12px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: #faf9fd; }
+.orbit-camera label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px; }
+.orbit-camera input { min-width: 80px; accent-color: var(--purple); }
+.orbit-camera output { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .orbit-figure { margin: 10px 0 4px; background: #faf9fe; border: 1px solid #e4dff0; border-radius: 9px; overflow: hidden; }
-#orbit-sky { display: block; width: 100%; height: clamp(150px,32vh,310px); }
+#orbit-sky { display: block; width: 100%; height: clamp(150px,32vh,310px); cursor: grab; touch-action: none; }
+#orbit-sky.dragging { cursor: grabbing; }
+#orbit-sky:focus-visible { outline: 2px solid var(--purple); outline-offset: -2px; }
 .orbit-figure figcaption { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px 14px; padding: 4px 8px 7px; font-size: 11px; color: var(--muted); }
 .orbit-figure .legend-dot { margin-right: 3px; }
 #orbit-dialog p { margin: 3px 0; line-height: 1.4; }
@@ -328,4 +334,5 @@
   #orbit-dialog { padding: 12px; }
   .orbit-controls { gap: 6px 8px; }
   .orbit-controls label,.orbit-scrub { font-size: 11px; }
+  .orbit-camera { grid-template-columns: 1fr; }
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface, nativeTrianglePaintOrder} from '../site/assets/orbit-viewer.mjs';
+import {orbitCamera, orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface, nativeTrianglePaintOrder} from '../site/assets/orbit-viewer.mjs';
 import {tidalOutline, tidalSurfaceModel} from "../site/assets/stellar-shapes.mjs";
 
 const p={eccentricity:0,omega:90,inclination:90,mass_ratio:.75};
@@ -27,6 +27,11 @@ const face=orbitProjection({...p,inclination:0},'earth');
 assert.equal(face(0).front,null);
 compare(Math.hypot(...difference(face(0))),1);
 assert.deepEqual(above(.271),orbitProjection({...p,inclination:22},'above')(.271));
+const freeView={mode:'free',azimuth:90,elevation:25},free=orbitProjection(p,freeView);
+assert.equal(free(0).front,1);assert.equal(free(.5).front,0);
+assert.ok(orbitCamera(p,freeView).earthDirection.y<0,'free camera shows a projected direction toward Earth');
+assert.equal(orbitCamera(p,'earth').earthDirection,null,'Earth preset looks directly toward Earth');
+assert.deepEqual(orbitCamera(p,'above').earthDirection,{x:0,y:1},'overhead preset keeps Earth down');
 const e={...p,eccentricity:.31,omega:31,mass_ratio:1.17};
 const ecc=orbitProjection(e,'above');
 assert.equal(ecc(0).front,1);
@@ -53,6 +58,9 @@ const tideParams={...p,inclination:85,mass_ratio:.85,radius_primary:.3,radius_se
 const tide=tidalSurfaceModel(tideParams);
 assert.ok(tide);
 assert.strictEqual(tide,tidalSurfaceModel({...tideParams,omega:20,inclination:76}), 'camera changes reuse expensive Roche samples');
+const highTide=tidalSurfaceModel(tideParams,'high');
+assert.ok(highTide.directions.length>tide.directions.length,'high detail samples a denser physical Roche surface');
+assert.strictEqual(highTide,tidalSurfaceModel({...tideParams,omega:20,inclination:76},'high'),'high-detail Roche samples are cached independently of the camera');
 const span=(outline,axis)=>Math.max(...outline.map(v=>v[axis]))-Math.min(...outline.map(v=>v[axis]));
 for(const k of [0,1]){
   const above=orbitProjection(tideParams,'above');
@@ -76,7 +84,7 @@ assert.ok(a>b,'periastron is more distorted');
 compare(span(shapeAt(.865),1),(a+b)/2);
 assert.equal(tidalSurfaceModel({...oval,eccentricity:.35}),null,'overflow does not invent a closed surface');
 assert.equal(tidalSurfaceModel({...oval,distortion:false}),null);
-console.log('PASS: Roche silhouettes turn in both views, eccentric distortion interpolates, invalid surfaces fall back');
+console.log('PASS: Roche silhouettes turn in both views, selectable detail changes physical samples, eccentric distortion interpolates, invalid surfaces fall back');
 
 const semiParams={...p,contact:false,semidetached:true,donor:'primary',period:1.8,
   radius_primary:.22,radius_secondary:.19,fillout_factor:.25};
@@ -106,6 +114,11 @@ for(const donor of ['primary','secondary'])for(const phase of [0,.5]){
     `${donor} donor: the foreground native star is painted last at phase ${phase}`);
   assert.ok(painted.at(-1).depth>painted[0].depth,'semi-detached conjunction has a strict foreground depth');
 }
+for(const donor of ['primary','secondary'])for(const phase of [0,.5]){
+  const parameters={...semiParams,donor},projected=projectNativeSurface(conjunctionMesh(donor),parameters,phase,freeView);
+  assert.equal(nativeTrianglePaintOrder(projected.triangles).at(-1).component,projected.position.front,
+    `${donor} donor: free-camera foreground is painted last at phase ${phase}`);
+}
 
 const contactParams={...semiParams,contact:true,semidetached:false,mass_ratio:1,fillout_factor:.25};
 const contactMesh={schema:1,geometry:'contact',donor:'primary',frame:'primary_origin',neck:.5,components:[
@@ -123,6 +136,11 @@ for(const phase of [0,.5]){
   const painted=nativeTrianglePaintOrder(projected.triangles);
   assert.equal(painted.at(-1).component,projected.position.front,
     `the foreground contact half is painted last at phase ${phase}`);
+}
+for(const phase of [0,.5]){
+  const projected=projectNativeSurface(contactMesh,contactParams,phase,freeView);
+  assert.equal(nativeTrianglePaintOrder(projected.triangles).at(-1).component,projected.position.front,
+    `contact free-camera foreground is painted last at phase ${phase}`);
 }
 const viewerSource=await import('node:fs/promises').then(fs=>fs.readFile(new URL('../site/assets/orbit-viewer.mjs',import.meta.url),'utf8'));
 assert.match(viewerSource,/ctx\.globalAlpha=1;/,'native PHOEBE surfaces are fully opaque');

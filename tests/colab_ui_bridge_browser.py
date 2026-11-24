@@ -25,7 +25,23 @@ class ProbeKernel:
     def __init__(self): self.calls=[]
     def status(self): return {"backend":"native-python","version":"2.5.4","runtime":"probe Python","pid":123}
     def cancel(self,job_id): self.calls.append(("cancel",job_id))
-    def run(self,job_id,operation,payload): raise AssertionError(f"unexpected non-stream operation {operation}")
+    def run(self,job_id,operation,payload):
+        if operation!="surface":raise AssertionError(f"unexpected non-stream operation {operation}")
+        p=payload["parameters"];triangles=payload["triangles"]
+        if p["contact"]:
+            mesh={"schema":1,"source":"native PHOEBE 2.5.4 probe","geometry":"contact","donor":"primary",
+                  "frame":"primary_origin","neck":.5,"phase":0,"triangles_requested":triangles,"triangles_actual":triangles,
+                  "components":[
+                    {"name":"primary","triangles":[[[0,-.2,0],[.5,-.08,.08],[.5,.08,.08]],[[0,-.2,0],[.5,.08,.08],[0,.2,0]]]},
+                    {"name":"secondary","triangles":[[[.5,-.08,.08],[1,-.2,0],[1,.2,0]],[[.5,-.08,.08],[1,.2,0],[.5,.08,.08]]]}]}
+        else:
+            mesh={"schema":1,"source":"native PHOEBE 2.5.4 probe","geometry":"semi","donor":p["donor"],
+                  "frame":"component_local","phase":0,"triangles_requested":triangles,"triangles_actual":triangles,
+                  "components":[
+                    {"name":"primary","triangles":[[[.45,-.08,0],[.45,.08,0],[-.32,0,.16]],[[.45,-.08,0],[-.32,0,-.16],[-.32,0,.16]]]},
+                    {"name":"secondary","triangles":[[[.18,-.05,0],[.18,.05,0],[-.16,0,.1]],[[.18,-.05,0],[-.16,0,-.1],[-.16,0,.1]]]}]}
+        self.calls.append((job_id,operation,triangles))
+        return {"value":mesh,"runtime":self.status()}
 
     @staticmethod
     def result(payload,fit=False):
@@ -69,6 +85,14 @@ def main():
             assert any(operation=="compute" for _,operation in kernel.calls if operation!="cancel")
             assert "Colab Python runtime" in page.locator("#engine-runtime").inner_text()
             assert "browser WebAssembly" not in page.locator("#engine-detail").inner_text()
+            assert page.locator("#window-button").is_disabled()
+            assert "no longer provides a reliable" in page.locator("#window-button").get_attribute("title")
+
+            # A denied iframe fullscreen request is reported and cannot alter routing.
+            page.evaluate("Object.defineProperty(document.documentElement,'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))})")
+            page.locator("#fullscreen-button").click()
+            page.get_by_text("Fullscreen was blocked",exact=False).wait_for(timeout=5000)
+            assert any(operation=="compute" for _,operation in kernel.calls if operation!="cancel")
 
             page.locator("#fit-button").click()
             page.locator("#fit-form button[type=submit]").click()

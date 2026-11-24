@@ -70,6 +70,12 @@ def test_generated_notebook_exposes_full_lab_and_native_runtime():
     assert "never fall back to browser WebAssembly" in source
     assert "asset proxy never handles scientific Compute or Fit requests" in source
     assert "BinaryFitterApp" not in source and "ToggleButtons" not in source
+    code_cells=[cell for cell in notebook.cells if cell.cell_type=="code"]
+    assert len(code_cells)==3
+    assert all(cell.metadata.get("cellView")=="form" for cell in code_cells)
+    assert all(cell.metadata.get("colab")=={} for cell in code_cells)
+    assert all(cell.source.startswith("#@title ") for cell in code_cells)
+    assert "Runtime → Run all" in source
 
 
 def test_colab_overlay_injects_native_transport_and_routes_requests():
@@ -138,6 +144,13 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "type==='partial'" in client and "this.pause(data.id)" in client
     assert "green tested / amber caution / red unvalidated" in app
     assert "!unphysicalReason() && !current" in app
+    assert "requestFullscreen" in app and "document.fullscreenElement" in app
+    assert "window.open(location.href" in app and "opened.opener=null" in app
+    assert "windowButton.disabled=true" in mode
+    launcher=(ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()
+    assert "google.colab.kernel.proxyPort" in launcher
+    assert "allowfullscreen" in launcher and "fullscreen; clipboard-read" in launcher
+    assert "serve_kernel_port_as_window" not in launcher
 
 
 def test_commit_pinned_preview_reuses_only_generated_public_runtime():

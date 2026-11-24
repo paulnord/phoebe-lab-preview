@@ -1,4 +1,4 @@
-import {tidalOutline,tidalSurfaceModel} from './stellar-shapes.mjs?v=90806d58aeae79bc';
+import {tidalOutline,tidalSurfaceModel} from './stellar-shapes.mjs?v=camera-detail1';
 import {eccentricAnomalyAtPhase} from '../experiment/eccentric-orbit.mjs?v=436129dc9aef5ac1';
 
 export const foldPhase = phase => ((phase + .5) % 1 + 1) % 1 - .5;
@@ -16,18 +16,45 @@ export function overheadEarthDirection(inclination) {
   return y>1e-9?{x:0,y}:null;
 }
 
+const radians=value=>value*Math.PI/180;
+
+// A camera changes only the drawing projection. It never changes orbital physics.
+// Positive depth points toward the camera so the painter can draw the foreground last.
+export function orbitCamera(p,view='earth') {
+  const mode=typeof view==='string'?view:view?.mode||'earth';
+  const i=radians(p.inclination);
+  let right,down,depth;
+  if(mode==='above'){
+    // Preserve the established overhead convention: projected Earth is straight down.
+    right=[-1,0,0];down=[0,1,0];depth=[0,0,1];
+  }else if(mode==='free'){
+    const az=radians(Number.isFinite(view.azimuth)?view.azimuth:90);
+    const el=radians(Number.isFinite(view.elevation)?view.elevation:30);
+    depth=[Math.cos(el)*Math.cos(az),Math.cos(el)*Math.sin(az),Math.sin(el)];
+    right=[Math.sin(az),-Math.cos(az),0];
+    down=[-Math.sin(el)*Math.cos(az),-Math.sin(el)*Math.sin(az),Math.cos(el)];
+  }else{
+    right=[1,0,0];down=[0,-Math.cos(i),Math.sin(i)];depth=[0,Math.sin(i),Math.cos(i)];
+  }
+  const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  const project=point=>[dot(point,right),dot(point,down),dot(point,depth)];
+  const earth=project([0,Math.sin(i),Math.cos(i)]),length=Math.hypot(earth[0],earth[1]);
+  return {mode,right,down,depth,project,earthDirection:length>1e-9?{x:earth[0]/length,y:earth[1]/length}:null};
+}
+
 export function orbitProjection(p, view) {
   const e=p.eccentricity, w=p.omega*Math.PI/180, i=p.inclination*Math.PI/180;
-  const c=Math.cos(w),s=Math.sin(w),minor=Math.sqrt(1-e*e),ci=Math.cos(i),si=Math.sin(i);
+  const c=Math.cos(w),s=Math.sin(w),minor=Math.sqrt(1-e*e),camera=orbitCamera(p,view);
   const anomaly=eccentricAnomalyAtPhase(e,p.omega);
   const factors=[-p.mass_ratio/(1+p.mass_ratio),1/(1+p.mass_ratio)];
   return phase=>{
     const E=anomaly(phase), u=Math.cos(E)-e,v=minor*Math.sin(E);
     const along=u*s+v*c, across=u*c-v*s;
-    // Rotate the entire overhead frame 180°, preserving orbital direction.
-    const [x,y]=view==='above'?[-across,along]:[across,-along*ci];
+    const [x,y,z]=camera.project([across,along,0]);
     const separation=1-e*Math.cos(E);
-    return {stars:factors.map(f=>({x:f*x,y:f*y})),depths:factors.map(f=>view==='above'?0:f*along*si),front:Math.abs(si)<1e-9?null:along>=0?1:0,
+    const depths=factors.map(f=>f*z),delta=depths[1]-depths[0];
+    const front=camera.mode==='above'?(Math.abs(Math.sin(i))<1e-9?null:along>=0?1:0):Math.abs(delta)<1e-9?null:delta>0?1:0;
+    return {stars:factors.map(f=>({x:f*x,y:f*y})),depths,front,
       separation,cosLongitude:across/separation,sinLongitude:along/separation};
   };
 }
@@ -55,7 +82,7 @@ function canvasSpace(canvas) {
 }
 
 function orbitPainter(p, view, surface) {
-  const position=orbitProjection(p,view), paths=[[],[]], radii=[p.radius_primary,p.radius_secondary];
+  const camera=orbitCamera(p,view),position=orbitProjection(p,view), paths=[[],[]], radii=[p.radius_primary,p.radius_secondary];
   const extents=surface?.extents??radii;
   let extentX=0,extentY=0;
   for(let j=0;j<144;j++){
@@ -67,7 +94,7 @@ function orbitPainter(p, view, surface) {
   }
   return (canvas,phase)=>{
     const box=canvasSpace(canvas);if(!box)return;
-    const {ctx,w,h}=box,arrow=view==='above'?overheadEarthDirection(p.inclination):null;
+    const {ctx,w,h}=box,arrow=camera.earthDirection;
     const top=8, bottom=arrow?46:8, cy=(h+top-bottom)/2;
     const scale=Math.min((w-24)/(2*extentX),(h-top-bottom)/(2*extentY));
     if(!(scale>0))return;
@@ -80,7 +107,7 @@ function orbitPainter(p, view, surface) {
     ctx.fillStyle='#6d6880';ctx.fillRect(w/2-2,cy-2,4,4);
     if(arrow){
       ctx.strokeStyle='#3a3c53';ctx.fillStyle='#3a3c53';ctx.lineWidth=1.5;
-      const start=[w/2,h-41],tip=[start[0]+18*arrow.x,start[1]+18*Math.sign(arrow.y)];
+      const start=[w/2,h-41],tip=[start[0]+18*arrow.x,start[1]+18*arrow.y];
       ctx.beginPath();ctx.moveTo(...start);ctx.lineTo(...tip);
       ctx.lineTo(tip[0]-5,tip[1]-5);ctx.moveTo(...tip);ctx.lineTo(tip[0]+5,tip[1]-5);ctx.stroke();
       ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('Toward Earth (in-plane projection)',w/2,h-8);
@@ -93,7 +120,7 @@ function orbitPainter(p, view, surface) {
       ctx.fillStyle=fill;ctx.strokeStyle=k?'#67569c':'#99612e';ctx.lineWidth=1;
       ctx.beginPath();
       if(surface){
-        tidalOutline(surface.radii[k],p,pos,k,view).forEach(([sx,sy],j)=>
+        tidalOutline(surface.radii[k],p,pos,k,camera,surface.directions).forEach(([sx,sy],j)=>
           j?ctx.lineTo(cx+sx*scale,yy+sy*scale):ctx.moveTo(cx+sx*scale,yy+sy*scale));
         ctx.closePath();
       }else ctx.arc(cx,yy,r,0,2*Math.PI);
@@ -109,14 +136,14 @@ export function projectNativeSurface(mesh,p,phase,view) {
     throw Error('A connected native contact envelope is required.');
   if(p.semidetached && (mesh.geometry!=='semi' || mesh.frame!=='component_local' || mesh.donor!==p.donor))
     throw Error('The native semi-detached donor surface is stale.');
-  const pos=orbitProjection(p,view)(phase),ci=Math.cos(p.inclination*Math.PI/180),si=Math.sin(p.inclination*Math.PI/180);
+  const camera=orbitCamera(p,view),pos=orbitProjection(p,view)(phase);
   function point(value,component){
     let [u,v,z]=value,sign=1,center=null;
     if(mesh.frame==='primary_origin')u-=p.mass_ratio/(1+p.mass_ratio);
     else {sign=component===0?1:-1;center=pos.stars[component];}
     const across=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
     const along=sign*(u*pos.sinLongitude+v*pos.cosLongitude);
-    const relative=view==='above'?[-across,along,z]:[across,-along*ci+z*si,along*si+z*ci];
+    const relative=camera.project([across,along,z]);
     return center?[center.x+relative[0],center.y+relative[1],pos.depths[component]+relative[2]]:relative;
   }
   const triangles=[];
@@ -134,7 +161,7 @@ export function projectNativeSurface(mesh,p,phase,view) {
 export const nativeTrianglePaintOrder=triangles=>[...triangles].sort((a,b)=>a.depth-b.depth);
 
 function nativeOrbitPainter(p,view,mesh) {
-  const position=orbitProjection(p,view),paths=[[],[]];
+  const camera=orbitCamera(p,view),position=orbitProjection(p,view),paths=[[],[]];
   let extentX=.7,extentY=.7;
   for(let j=0;j<72;j++){
     const phase=j/72,pos=position(phase),projected=projectNativeSurface(mesh,p,phase,view);
@@ -143,7 +170,7 @@ function nativeOrbitPainter(p,view,mesh) {
   }
   return (canvas,phase)=>{
     const box=canvasSpace(canvas);if(!box)return;
-    const {ctx,w,h}=box,arrow=view==='above'?overheadEarthDirection(p.inclination):null;
+    const {ctx,w,h}=box,arrow=camera.earthDirection;
     const top=8,bottom=arrow?46:8,cy=(h+top-bottom)/2;
     const scale=Math.min((w-24)/(2*extentX),(h-top-bottom)/(2*extentY));
     const px=x=>w/2+x*scale,py=y=>cy+y*scale;
@@ -164,7 +191,7 @@ function nativeOrbitPainter(p,view,mesh) {
     ctx.globalAlpha=1;ctx.fillStyle='#6d6880';ctx.fillRect(w/2-2,cy-2,4,4);
     if(arrow){
       ctx.strokeStyle='#3a3c53';ctx.fillStyle='#3a3c53';ctx.lineWidth=1.5;
-      const start=[w/2,h-41],tip=[start[0]+18*arrow.x,start[1]+18*Math.sign(arrow.y)];
+      const start=[w/2,h-41],tip=[start[0]+18*arrow.x,start[1]+18*arrow.y];
       ctx.beginPath();ctx.moveTo(...start);ctx.lineTo(...tip);ctx.lineTo(tip[0]-5,tip[1]-5);ctx.moveTo(...tip);ctx.lineTo(tip[0]+5,tip[1]-5);ctx.stroke();
       ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('Toward Earth (in-plane projection)',w/2,h-8);
     }
@@ -201,35 +228,47 @@ function drawCurve(canvas, curve, phase) {
   }
 }
 
-export function bindOrbitViewer(readModel,ensureSurface=()=>{}) {
+export function bindOrbitViewer(readModel,ensureSurface=()=>{},setDetail=()=>{}) {
   const id=name=>document.getElementById('orbit-'+name);
-  const dialog=id('dialog'), speed=id('speed'),scrub=id('phase'),play=id('play'),view=id('view');
+  const dialog=id('dialog'), speed=id('speed'),scrub=id('phase'),play=id('play'),view=id('view'),detail=id('detail');
+  const cameraControls=id('camera'),azimuth=id('azimuth'),elevation=id('elevation'),cameraReadout=id('camera-readout'),sky=id('sky');
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
-  let playing=false,phase=0,last=0,frame=0,key='',paint,launcher,lastAvailable=null;
+  let playing=false,phase=0,last=0,frame=0,key='',paint,launcher,lastAvailable=null,drag=null;
+  const cameraView=()=>view.value==='free'?{mode:'free',azimuth:Number(azimuth.value),elevation:Number(elevation.value)}:view.value;
+  function syncCameraControls(){
+    cameraControls.hidden=view.value!=='free';
+    cameraReadout.textContent=`Azimuth ${Number(azimuth.value).toFixed(0)}° · elevation ${Number(elevation.value).toFixed(0)}°`;
+  }
   const setPlaying=value=>{playing=value;last=0;play.textContent=value?'Pause':'Play';};
   function draw(){
     if(!dialog.open)return;
     const {parameters:p,curve,label,surface}=readModel();
-    const k=[view.value,p.contact,p.semidetached,p.donor,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion,surface?.key,surface?.status].join('/');
+    const camera=cameraView();
+    const k=[view.value,detail.value,azimuth.value,elevation.value,p.contact,p.semidetached,p.donor,p.inclination,p.eccentricity,p.omega,p.mass_ratio,p.radius_primary,p.radius_secondary,p.distortion,surface?.key,surface?.status].join('/');
     if(k!==key){
       key=k;
-      const constrained=p.contact||p.semidetached,detachedSurface=constrained?null:tidalSurfaceModel(p);
-      const nativeMesh=constrained && surface?.status==='ready'?surface.mesh:null;
-      paint=nativeMesh?nativeOrbitPainter(p,view.value,nativeMesh):constrained?(canvas=>{canvas.width=Math.max(1,canvas.clientWidth);canvas.height=Math.max(1,canvas.clientHeight);canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);}):orbitPainter(p,view.value,detachedSurface);
+      const constrained=p.contact||p.semidetached,detachedSurface=constrained?null:tidalSurfaceModel(p,detail.value);
+      const nativeMesh=constrained?surface?.mesh:null;
+      paint=nativeMesh?nativeOrbitPainter(p,camera,nativeMesh):constrained?(canvas=>{canvas.width=Math.max(1,canvas.clientWidth);canvas.height=Math.max(1,canvas.clientHeight);canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);}):orbitPainter(p,camera,detachedSurface);
       const nativeState=surface;
+      const requested=detail.value==='high'?'High detail':'Preview detail';
+      const shown=(nativeState?.displayDetail==='high'?'High':'Preview')+' detail';
+      const displayed=nativeMesh?`${nativeMesh.triangles_actual} PHOEBE ntriangles · ${nativeMesh.components.reduce((sum,part)=>sum+part.triangles.length,0)} rendered facets`:'';
+      const pending=nativeMesh&&nativeState?.status==='pending'?` ${requested} is regenerating.`:nativeMesh&&nativeState?.status==='error'?` ${requested} failed: ${nativeState.error}`:'';
       id('shape-note').textContent=nativeMesh&&p.contact?
-        'Native PHOEBE connected common-envelope surface; the pinched color boundary marks the neck.' : nativeMesh&&p.semidetached?
-        `Native PHOEBE co-rotating surfaces; the ${p.donor} donor fills its Roche lobe.` : constrained&&nativeState?.status==='error'?
+        `${shown} · ${displayed}. Native PHOEBE connected common-envelope surface; the pinched color boundary marks the neck.${pending}` : nativeMesh&&p.semidetached?
+        `${shown} · ${displayed}. Native PHOEBE co-rotating surfaces; the ${p.donor} donor fills its Roche lobe.${pending}` : constrained&&nativeState?.status==='error'?
         `Native PHOEBE surface failed: ${nativeState.error}` : constrained?
-        'Building the native PHOEBE phase-zero surface; no detached substitute is shown.' : detachedSurface?
-        'Animated detached Roche surfaces. Heating is not shown.' : p.distortion?
+        `Building the native PHOEBE phase-zero surface at ${requested.toLowerCase()}; no detached substitute is shown.` : detachedSurface?
+        `${requested} · ${detachedSurface.directions.length} Roche surface samples per star. Animated detached Roche surfaces; heating is not shown.` : p.distortion?
         'Detached Roche surfaces are unavailable for these settings. Showing round disk radii instead.' :
         'Round disks (tidal distortion off). Heating is not shown.';
     }
-    paint(id('sky'),phase);
+    paint(sky,phase);
     const i=p.inclination.toFixed(1);
     id('inclination').textContent=view.value==='above'?
       (overheadEarthDirection(p.inclination)?'Inclination '+i+'°. Arrow shows only the part of the Earth direction in the orbital plane.':'Inclination '+i+'°. Earth lies along the orbital pole, so there is no in-plane arrow.'):
+      view.value==='free'?'Display camera only · '+cameraReadout.textContent+'. Arrow points toward Earth; drag the orbit to rotate.':
       'Inclination '+i+'°. '+(p.inclination>1e-6?'This is the view from Earth; the nearer star is drawn in front.':'Face-on view from Earth; neither star is in front of the other.');
     id('time').textContent='Phase '+phase.toFixed(3)+' · '+(phase*p.period).toFixed(4)+' of '+Number(p.period.toFixed(7))+' model days';
     scrub.value=String(phase);
@@ -251,11 +290,31 @@ export function bindOrbitViewer(readModel,ensureSurface=()=>{}) {
     if(value && dialog.open)frame=requestAnimationFrame(tick);
   }
   for(const button of document.querySelectorAll('[data-open-orbit]'))button.addEventListener('click',()=>{
-    launcher=button;phase=0;ensureSurface();dialog.showModal();run(!motion.matches);
+    launcher=button;ensureSurface();dialog.showModal();run(!motion.matches);
   });
   play.addEventListener('click',()=>run(!playing));
   scrub.addEventListener('input',()=>{phase=Number(scrub.value);run(false);});
-  view.addEventListener('change',draw);
+  view.addEventListener('change',()=>{syncCameraControls();draw();});
+  detail.addEventListener('change',()=>{key='';setDetail(detail.value);draw();});
+  for(const control of [azimuth,elevation])control.addEventListener('input',()=>{syncCameraControls();draw();});
+  sky.addEventListener('pointerdown',event=>{
+    const {parameters:p}=readModel();
+    if(view.value!=='free'){
+      const from=view.value;view.value='free';azimuth.value='90';
+      elevation.value=from==='above'?'85':String(Math.max(-85,Math.min(85,90-p.inclination)));
+      syncCameraControls();
+    }
+    drag={id:event.pointerId,x:event.clientX,y:event.clientY,azimuth:Number(azimuth.value),elevation:Number(elevation.value)};
+    sky.setPointerCapture?.(event.pointerId);sky.classList.add('dragging');run(false);event.preventDefault();
+  });
+  sky.addEventListener('pointermove',event=>{
+    if(!drag||event.pointerId!==drag.id)return;
+    azimuth.value=String(Math.max(-180,Math.min(180,drag.azimuth+(event.clientX-drag.x)*.6)));
+    elevation.value=String(Math.max(-85,Math.min(90,drag.elevation-(event.clientY-drag.y)*.6)));
+    syncCameraControls();draw();
+  });
+  const stopDrag=event=>{if(drag&&event.pointerId===drag.id){drag=null;sky.classList.remove('dragging');}};
+  sky.addEventListener('pointerup',stopDrag);sky.addEventListener('pointercancel',stopDrag);
   speed.addEventListener('change',()=>{last=0;draw();});
   id('close').addEventListener('click',()=>dialog.close());
   dialog.addEventListener('close',()=>{
@@ -265,5 +324,6 @@ export function bindOrbitViewer(readModel,ensureSurface=()=>{}) {
   });
   motion.addEventListener('change',()=>{if(motion.matches && dialog.open)run(false);});
   new ResizeObserver(draw).observe(id('sky'));
+  syncCameraControls();
   return draw;
 }

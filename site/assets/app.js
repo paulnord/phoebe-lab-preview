@@ -1,5 +1,5 @@
-import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=opaque-surfaces1';
-import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=geometry1';
+import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=camera-detail1';
+import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=camera-detail1';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
 import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
@@ -38,7 +38,7 @@ const modeOf=p=>p.contact?'contact':p.semidetached?'semi':'detached';
 const modeSnapshots={detached:{...DEFAULTS},semi:null,contact:null};
 let timingRevision=-1, liveTiming=null;
 let exactPartial = null, previousExact = null, engineFailed = false, elapsedTimer;
-let orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null},surfaceRequest=0,surfaceTimer;
+let orbitDetail='preview',orbitSurface={key:null,geometryKey:null,detail:'preview',displayDetail:null,status:'idle',mesh:null,error:null,id:null},surfaceRequest=0,surfaceTimer;
 let drawOrbitViewer=()=>{};
 const exactHistory = new Map();
 const modelHistory=[];
@@ -267,6 +267,28 @@ window.addEventListener('pointercancel',releasePointer);
 window.addEventListener('blur',releasePointer);
 
 function toast(text) { $('toast').textContent=text; $('toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toast').hidden=true,6500); }
+
+function syncFullscreenButton() {
+  const active=Boolean(document.fullscreenElement),button=$('fullscreen-button');
+  button.innerHTML=`<span aria-hidden="true">⛶</span> ${active?'Exit fullscreen':'Fullscreen'}`;button.setAttribute('aria-pressed',String(active));
+}
+
+async function toggleFullscreen() {
+  try {
+    if(document.fullscreenElement)await document.exitFullscreen();
+    else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();
+    else throw Error('Fullscreen is not supported by this browser.');
+  } catch(error) {
+    toast(colabNativeMode?'Fullscreen was blocked by the notebook host. Continue in the inline Colab workbench.':'Fullscreen was blocked by the browser. Use Full window for an app-only view.');
+  }
+  syncFullscreenButton();
+}
+
+function openFullWindow() {
+  const opened=window.open(location.href,'_blank');
+  if(opened)opened.opener=null;
+  if(!opened)toast('The app-only window was blocked. Allow pop-ups, or continue in this workbench.');
+}
 const showSolveOrbit=bindSolveOrbit($('solve-sky'));
 function status(text,kind='ready') {
   const iconClass=kind==='busy'?'solve-orbit':kind==='error'?'status-dot error':'status-dot';
@@ -372,7 +394,7 @@ function setGeometryMode(mode) {
 const drawStarGuide=bindStarGuide($('star-shape'),$('star-view'));
 drawOrbitViewer=bindOrbitViewer(()=>{
   const parameters=state.parameters;
-  const pack=(curve,label)=>({parameters,curve,label,surface:orbitSurface});
+  const pack=(curve,label)=>({parameters,curve,label,surface:{...orbitSurface,detail:orbitDetail}});
   const partial=exactPartial?.revision===state.revision?exactPartial:null;
   const completed=state.result?.revision===state.revision &&
     Object.keys(DEFAULTS).every(k=>state.result.parameters?.[k]===parameters[k])?state.result:null;
@@ -382,7 +404,11 @@ drawOrbitViewer=bindOrbitViewer(()=>{
   if(dragView)return pack(dragView,previewLabel());
   if(timing)return pack(timing,timing.label);
   return pack(null,'No curve for the current settings yet.');
-},()=>scheduleOrbitSurface(0,true));
+},()=>scheduleOrbitSurface(0,true),detail=>{
+  const resolved=detail==='high'?'high':'preview';
+  if(resolved===orbitDetail)return;
+  orbitDetail=resolved;scheduleOrbitSurface(0,true);
+});
 function updateControlValues() {
   for(const [key,{number,range,digits,min,max}] of parameterInputs) {
     const zoom=zoomOptions[key];
@@ -529,22 +555,25 @@ function scheduleCompute(delay=450) {clearTimeout(computeTimer);computeTimer=set
 
 function scheduleOrbitSurface(delay=350,retry=false) {
   clearTimeout(surfaceTimer);
-  if(unphysicalReason()){orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
-  const key=surfaceGeometryKey(state.parameters);
-  if(!key){orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
-  if(orbitSurface.key!==key){orbitSurface={key,status:'pending',mesh:null,error:null,id:null};drawOrbitViewer();}
+  if(unphysicalReason()){orbitSurface={key:null,geometryKey:null,detail:orbitDetail,displayDetail:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
+  const geometryKey=surfaceGeometryKey(state.parameters),key=geometryKey?`${geometryKey}/${orbitDetail}`:null;
+  if(!key){orbitSurface={key:null,geometryKey:null,detail:orbitDetail,displayDetail:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
+  if(orbitSurface.key!==key){
+    const keep=orbitSurface.geometryKey===geometryKey?orbitSurface.mesh:null;
+    orbitSurface={key,geometryKey,detail:orbitDetail,displayDetail:keep?orbitSurface.displayDetail:null,status:'pending',mesh:keep,error:null,id:null};drawOrbitViewer();
+  }
   else if(orbitSurface.status==='ready' || (orbitSurface.status==='pending'&&orbitSurface.id) || (!retry&&orbitSurface.status==='error'))return;
-  else if(retry&&orbitSurface.status==='error')orbitSurface={key,status:'pending',mesh:null,error:null,id:null};
+  else if(retry&&orbitSurface.status==='error')orbitSurface={...orbitSurface,status:'pending',error:null,id:null};
   surfaceTimer=setTimeout(requestOrbitSurface,delay);
 }
 
 function requestOrbitSurface() {
-  const key=surfaceGeometryKey(state.parameters);
+  const geometryKey=surfaceGeometryKey(state.parameters),key=geometryKey?`${geometryKey}/${orbitDetail}`:null;
   if(!key || key!==orbitSurface.key)return;
   if(!state.ready || state.busy){surfaceTimer=setTimeout(requestOrbitSurface,400);return;}
   const id=`surface-${++surfaceRequest}`;
-  orbitSurface={key,status:'pending',mesh:null,error:null,id};drawOrbitViewer();
-  state.worker.postMessage({type:'surface',id,payload:{parameters:{...state.parameters},triangles:500}});
+  orbitSurface={...orbitSurface,key,geometryKey,detail:orbitDetail,status:'pending',error:null,id};drawOrbitViewer();
+  state.worker.postMessage({type:'surface',id,payload:{parameters:{...state.parameters},triangles:orbitDetail==='high'?800:500}});
 }
 function setBusy(busy,fitting=false) {
   state.busy=busy;state.fitting=fitting;updateHistoryButtons();
@@ -586,14 +615,16 @@ function startEngine() {
       $('engine-pill').innerHTML='<span class="status-dot error"></span>Engine unavailable';status(cleanError(data.error),'error');return;
     }
     if(data.type==='surface_result') {
-      if(data.id===orbitSurface.id && surfaceGeometryKey(state.parameters)===orbitSurface.key){
-        orbitSurface={...orbitSurface,status:'ready',mesh:data.value,error:null};drawOrbitViewer();
+      const geometryKey=surfaceGeometryKey(state.parameters),key=geometryKey?`${geometryKey}/${orbitDetail}`:null;
+      if(data.id===orbitSurface.id && key===orbitSurface.key){
+        orbitSurface={...orbitSurface,status:'ready',mesh:data.value,displayDetail:orbitDetail,error:null};drawOrbitViewer();
       }
       return;
     }
     if(data.type==='surface_error') {
-      if(data.id===orbitSurface.id && surfaceGeometryKey(state.parameters)===orbitSurface.key){
-        orbitSurface={...orbitSurface,status:'error',mesh:null,error:cleanError(data.error)};drawOrbitViewer();
+      const geometryKey=surfaceGeometryKey(state.parameters),key=geometryKey?`${geometryKey}/${orbitDetail}`:null;
+      if(data.id===orbitSurface.id && key===orbitSurface.key){
+        orbitSurface={...orbitSurface,status:'error',error:cleanError(data.error)};drawOrbitViewer();
       }
       return;
     }
@@ -1007,6 +1038,9 @@ async function loadExample(notify=true) {
   }catch(e){if(id===exampleRequest)toast(cleanError(e));}
 }
 function bindEvents() {
+  $('fullscreen-button').onclick=toggleFullscreen;
+  $('window-button').onclick=openFullWindow;
+  document.addEventListener('fullscreenchange',syncFullscreenButton);
   $('undo-model').onclick=()=>stepModel(-1);
   $('redo-model').onclick=()=>stepModel(1);
   window.addEventListener('keydown',event=>{

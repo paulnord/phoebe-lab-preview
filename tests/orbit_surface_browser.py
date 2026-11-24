@@ -16,11 +16,11 @@ with sync_playwright() as pw:
     errors=[];page.on("pageerror",lambda error:errors.append(str(error)))
     page.add_init_script(r"""
 window.surfaceRequests=[];window.surfaceMeshes=[];window.failNextSurface=false;
-const semi=(donor)=>({schema:1,source:'native PHOEBE 2.5.4',geometry:'semi',donor,frame:'component_local',phase:0,triangles_requested:500,triangles_actual:500,components:[
+const semi=(donor,triangles)=>({schema:1,source:'native PHOEBE 2.5.4',geometry:'semi',donor,frame:'component_local',phase:0,triangles_requested:triangles,triangles_actual:triangles,components:[
  {name:'primary',triangles:[[[.45,-.08,0],[.45,.08,0],[-.32,0,.16]],[[.45,-.08,0],[-.32,0,-.16],[-.32,0,.16]]]},
  {name:'secondary',triangles:[[[.18,-.05,0],[.18,.05,0],[-.16,0,.1]],[[.18,-.05,0],[-.16,0,-.1],[-.16,0,.1]]]}
 ]});
-const contact=()=>({schema:1,source:'native PHOEBE 2.5.4',geometry:'contact',donor:'primary',frame:'primary_origin',neck:.5,phase:0,triangles_requested:500,triangles_actual:500,components:[
+const contact=(triangles)=>({schema:1,source:'native PHOEBE 2.5.4',geometry:'contact',donor:'primary',frame:'primary_origin',neck:.5,phase:0,triangles_requested:triangles,triangles_actual:triangles,components:[
  {name:'primary',triangles:[[[0,-.2,0],[.5,-.08,.08],[.5,.08,.08]],[[0,-.2,0],[.5,.08,.08],[0,.2,0]]]},
  {name:'secondary',triangles:[[[.5,-.08,.08],[1,-.2,0],[1,.2,0]],[[.5,-.08,.08],[1,.2,0],[.5,.08,.08]]]}
 ]});
@@ -31,10 +31,10 @@ class DeterministicWorker {
   if(message.type==='initialize'){this.emit({type:'ready',version:'2.5.4'});return;}
   if(message.type==='release'||message.type==='continue')return;
   if(message.type==='surface'){
-   const p=message.payload.parameters;window.surfaceRequests.push({id:message.id,donor:p.donor,contact:p.contact});
+   const p=message.payload.parameters,triangles=message.payload.triangles;window.surfaceRequests.push({id:message.id,donor:p.donor,contact:p.contact,triangles});
    if(window.failNextSurface){window.failNextSurface=false;this.emit({type:'surface_error',id:message.id,error:'synthetic mesh failure'},40);return;}
-   const mesh=p.contact?contact():semi(p.donor);window.surfaceMeshes.push(mesh);
-   this.emit({type:'surface_result',id:message.id,value:mesh},p.donor==='primary'&&!p.contact?220:70);return;
+   const mesh=p.contact?contact(triangles):semi(p.donor,triangles);window.surfaceMeshes.push(mesh);
+   this.emit({type:'surface_result',id:message.id,value:mesh},triangles===800?220:p.donor==='primary'&&!p.contact?220:70);return;
   }
   if(message.type==='compute'||message.type==='fit'){
    const p=message.payload.parameters,n=p.contact||p.semidetached?129:513;
@@ -66,10 +66,29 @@ window.Worker=DeterministicWorker;
     page.locator("#orbit-phase").evaluate("el=>{el.value='.25';el.dispatchEvent(new Event('input',{bubbles:true}))}")
     after=canvas.evaluate("el=>Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data).reduce((s,v)=>s+v,0)")
     assert before!=after
+    expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail · 500 PHOEBE ntriangles")
+    page.locator("#orbit-detail").select_option("high")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("High detail is regenerating")
+    expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 800 PHOEBE ntriangles",timeout=12000)
+    assert page.evaluate("surfaceRequests.at(-1).triangles")==800
+    # Every geometry shares the presets, explicit free-camera controls and drag rotation.
+    assert page.locator("#orbit-view option").all_text_contents()==["From Earth","Above orbit","Free orbit camera"]
+    page.locator("#orbit-view").select_option("free")
+    expect(page.locator("#orbit-camera")).to_be_visible()
+    page.locator("#orbit-azimuth").evaluate("el=>{el.value='35';el.dispatchEvent(new Event('input',{bubbles:true}))}")
+    page.locator("#orbit-elevation").evaluate("el=>{el.value='22';el.dispatchEvent(new Event('input',{bubbles:true}))}")
+    expect(page.locator("#orbit-inclination")).to_contain_text("Display camera only")
+    azimuth=float(page.locator("#orbit-azimuth").input_value())
+    box=canvas.bounding_box();page.mouse.move(box["x"]+box["width"]*.45,box["y"]+box["height"]*.45)
+    page.mouse.down();page.mouse.move(box["x"]+box["width"]*.65,box["y"]+box["height"]*.55);page.mouse.up()
+    assert float(page.locator("#orbit-azimuth").input_value())!=azimuth
     page.locator("#orbit-close").click()
     page.locator("#geometry-contact").check()
     page.locator(".orbit-launch").click()
     expect(page.locator("#orbit-shape-note")).to_contain_text("connected common-envelope",timeout=12000)
+    expect(page.locator("#orbit-view")).to_have_value("free")
+    expect(page.locator("#orbit-camera")).to_be_visible()
+    expect(page.locator("#orbit-phase")).to_have_value("0.25")
     assert page.evaluate("surfaceMeshes.at(-1).neck") == .5
     page.locator("#orbit-close").click()
     # A relevant contact control rebuilds and exposes an honest error state.
@@ -81,5 +100,5 @@ window.Worker=DeterministicWorker;
     page.locator("#orbit-close").click()
     assert len(page.evaluate("surfaceRequests"))>=4
     assert not errors,errors
-    print("PASS: browser pending/stale/ready/error surfaces, both donors, contact neck, phase/view wiring")
+    print("PASS: browser pending/stale/ready/error surfaces, both donors, contact neck, shared camera presets/controls/drag")
     browser.close()

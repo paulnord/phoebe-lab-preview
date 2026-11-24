@@ -137,22 +137,27 @@ function skyOrbit(p) {
 
 // Local +x points toward the companion and +z is the orbital pole.
 // Sample the same detached Roche equipotential used by the side-view guide.
-const surfaceDirections=[[1,0,0],[-1,0,0]];
-for(let ring=1;ring<12;ring++){
-  const angle=pi*ring/12;
-  for(let j=0;j<20;j++){
-    const azimuth=2*pi*j/20;
-    surfaceDirections.push([Math.cos(angle),Math.sin(angle)*Math.cos(azimuth),Math.sin(angle)*Math.sin(azimuth)]);
+function makeSurfaceDirections(rings,azimuths){
+  const directions=[[1,0,0],[-1,0,0]];
+  for(let ring=1;ring<rings;ring++){
+    const angle=pi*ring/rings;
+    for(let j=0;j<azimuths;j++){
+      const azimuth=2*pi*j/azimuths;
+      directions.push([Math.cos(angle),Math.sin(angle)*Math.cos(azimuth),Math.sin(angle)*Math.sin(azimuth)]);
+    }
   }
+  return directions;
 }
+const surfaceDirections=makeSurfaceDirections(12,20);
+const highSurfaceDirections=makeSurfaceDirections(18,32);
 
-function tidalRadii(q,r,e){
+function tidalRadii(q,r,e,directions){
   const samples=[];
   for(let i=0;i<(e?5:1);i++){
     const d=1-e+2*e*i/4;
     const surface=rocheSurface(q,d,r);
     if(!surface)return null;
-    samples.push(surfaceDirections.map(([x,,z])=>surface(x,z)));
+    samples.push(directions.map(([x,,z])=>surface(x,z)));
   }
   return samples;
 }
@@ -178,32 +183,36 @@ function silhouette(points){
 }
 
 // Cache the expensive Roche solve independently of the camera and orbital phase.
-let tidalKey='', cachedTidalModel=null;
-export function tidalSurfaceModel(p) {
+const tidalCache=new Map();
+export function tidalSurfaceModel(p,detail='preview') {
   if(!p.distortion)return null;
   const q=p.mass_ratio,e=p.eccentricity;
-  const key=[q,e,p.radius_primary,p.radius_secondary].join('/');
-  if(key!==tidalKey){
-    const radii=[tidalRadii(q,p.radius_primary,e),tidalRadii(1/q,p.radius_secondary,e)];
-    cachedTidalModel=radii.every(Boolean)?{
-      radii,extents:radii.map(samples=>Math.max(...samples.flat()))
-    }:null;
-    tidalKey=key;
+  const resolved=detail==='high'?'high':'preview',directions=resolved==='high'?highSurfaceDirections:surfaceDirections;
+  const key=[resolved,q,e,p.radius_primary,p.radius_secondary].join('/');
+  if(!tidalCache.has(key)){
+    const radii=[tidalRadii(q,p.radius_primary,e,directions),tidalRadii(1/q,p.radius_secondary,e,directions)];
+    tidalCache.set(key,radii.every(Boolean)?{
+      detail:resolved,directions,radii,extents:radii.map(samples=>Math.max(...samples.flat()))
+    }:null);
   }
-  return cachedTidalModel;
+  return tidalCache.get(key);
 }
 
 // Return a silhouette relative to the center of a star, in semimajor-axis units.
 // The local x direction points to its companion; rotate the 3-D lobe before
 // projecting. Above the orbit the sky axes rotate 180° to put Earth below.
-export function tidalOutline(samples,p,pos,star,view) {
+export function tidalOutline(samples,p,pos,star,view,directions=surfaceDirections) {
   const e=p.eccentricity,ci=Math.cos(p.inclination*pi/180),si=Math.sin(p.inclination*pi/180);
   const bin=e?Math.max(0,Math.min(samples.length-1,(pos.separation-1+e)*(samples.length-1)/(2*e))):0;
   const lo=Math.floor(bin),hi=Math.ceil(bin),t=bin-lo,sign=star===0?1:-1;
-  return silhouette(surfaceDirections.map(([u,v,z],i)=>{
+  return silhouette(directions.map(([u,v,z],i)=>{
     const size=(1-t)*samples[lo][i]+t*samples[hi][i];
     const across=sign*(u*pos.cosLongitude-v*pos.sinLongitude);
     const along=sign*(u*pos.sinLongitude+v*pos.cosLongitude);
+    if(view && typeof view.project==='function'){
+      const projected=view.project([size*across,size*along,size*z]);
+      return projected.slice(0,2);
+    }
     return view==='above'?[-size*across,size*along]:[size*across,size*(-along*ci+z*si)];
   }));
 }

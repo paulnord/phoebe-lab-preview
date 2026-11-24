@@ -51,3 +51,12 @@ def test_native_contact_surface_is_connected_at_neck_and_cached():
     assert parts[0][...,0].max()>=neck-0.06
     assert parts[1][...,0].min()<=neck+0.06
     assert parts[0][...,0].max()>=parts[1][...,0].min(),"native common-envelope halves meet without a detached gap"
+
+def test_native_surface_detail_has_more_real_facets():
+    m=load_engine();p=values("primary")
+    preview=m.surface_mesh({"parameters":p,"triangles":300})
+    high=m.surface_mesh({"parameters":p,"triangles":800})
+    preview_count=sum(len(component["triangles"]) for component in preview["components"])
+    high_count=sum(len(component["triangles"]) for component in high["components"])
+    assert preview["triangles_actual"]==300 and high["triangles_actual"]==800
+    assert high_count>preview_count
