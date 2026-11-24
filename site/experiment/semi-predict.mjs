@@ -1,4 +1,5 @@
 // Frozen PHOEBE semi-detached display surrogate. Native PHOEBE is authoritative.
+import {prepareCoordinates,classifyCoordinates} from './preview-confidence.mjs';
 export function rocheLobeFraction(starMassRatio) {
   const root=Math.cbrt(starMassRatio), square=root*root;
   return .49*square/(.6*square+Math.log1p(root));
@@ -18,15 +19,18 @@ export function makeSemiPredictor(spec) {
     const freeRadius=p.donor==='primary'?p.radius_secondary:p.radius_primary,modelSpec=spec.donors[p.donor];
     const lobe=nativeLobeFraction(modelSpec,p.mass_ratio) ?? rocheLobeFraction(p.donor==='primary'?p.mass_ratio:1/p.mass_ratio);
     const freeFill=freeRadius/lobe;
-    const values={...p,free_fill:freeFill},x=[];
-    for(const key of keys){const value=values[key],[lo,hi]=bounds[key];if(!Number.isFinite(value)||value<lo||value>hi)return null;x.push(2*(value-lo)/(hi-lo)-1);}
+    if(!Number.isFinite(freeFill)||freeFill<=0||freeFill>=1)return null;
+    const values={...p,free_fill:freeFill},prepared=prepareCoordinates(values,keys,bounds);if(!prepared)return null;
+    const x=prepared.x;
     let nearest=Infinity;
     const kernel=modelSpec.centers.map(center=>{const d=center.reduce((sum,value,j)=>sum+(x[j]-value)**2,0);nearest=Math.min(nearest,Math.sqrt(d));return Math.exp(-modelSpec.gamma*d);});
-    if(nearest>modelSpec.nearest_scaled_distance_max)return null;
+    const previewConfidence=classifyCoordinates(prepared,nearest,modelSpec.nearest_scaled_distance_max);
+    if(!previewConfidence)return null;
     const coefficients=Array.from({length:harmonics+1},(_,k)=>kernel.reduce((sum,value,j)=>sum+value*modelSpec.weights[j][k],0));
     const phases=Array.from({length:n+1},(_,j)=>j/n-.5);
     const curve=phases.map(phase=>coefficients.reduce((sum,value,k)=>sum+(k?value*Math.cos(2*Math.PI*k*phase):value),0));
     const core=curve.slice(0,n).sort((a,b)=>a-b),median=(core[n/2-1]+core[n/2])/2;for(let j=0;j<=n;j++)curve[j]/=median;
-    return {phases,model:curve,exploratory:true,surfaceMode:`semi-detached · ${p.donor} donor`,semiPreview:true,freeFill};
+    return {phases,model:curve,exploratory:previewConfidence!=='good',previewConfidence,
+      boundaryHeld:prepared.outside,surfaceMode:`semi-detached · ${p.donor} donor`,semiPreview:true,freeFill};
   };
 }

@@ -9,8 +9,10 @@ const started=performance.now();let curve;
 for(let i=0;i<1000;i++)curve=predict({...p,inclination:75+10*(i%101)/100});
 const elapsed=performance.now()-started;
 assert.ok(curve&&curve.phases.length===257&&curve.model.every(Number.isFinite));
+assert(['good','caution','outside'].includes(curve.previewConfidence));
 assert.equal(predict({...p,contact:false}),null);
 assert.equal(predict({...p,period:2}),null);
 assert.equal(predict({...p,mass_ratio:.3}),null);
+const edge=predict({...p,mass_ratio:1.22});if(edge){assert.equal(edge.previewConfidence,'outside');assert.equal(edge.boundaryHeld,true);}
 assert.equal(predict({...p,irradiation:true}),null);
 console.log(JSON.stringify({status:'PASS',predictions:1000,total_ms:elapsed,mean_ms:elapsed/1000}));

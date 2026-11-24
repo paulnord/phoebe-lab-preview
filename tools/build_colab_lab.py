@@ -38,6 +38,7 @@ lab_server = show_lab(height=1050)
     nbf.v4.new_markdown_cell("""## Runtime notes
 
 - **Colab:** supported on the free CPU runtime. Exact curves, bounded fits, residual/export results, and native orbit meshes run in the notebook's native Python process. The top status pill and result provenance say `Colab native`.
+- Native Colab curves arrive in genuine PHOEBE phase batches, so the plot fills in progressively before the authoritative final normalization/statistics/export result.
 - **Local Jupyter/classic:** supported when the browser and kernel share the same computer. Run the notebook from a repository checkout to use its local `site/` files.
 - **Remote JupyterLab:** direct loopback iframes may be blocked by the deployment. Use Colab or the standalone page unless that server provides a loopback proxy.
 - **Standalone preview:** continues to use PHOEBE WebAssembly in its browser worker; this notebook transport does not alter it.

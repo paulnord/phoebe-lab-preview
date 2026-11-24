@@ -45,6 +45,24 @@ class NativeKernel:
             event = self.jobs.get(str(job_id))
         if event is not None: event.set()
 
+    def stream(self, job_id, operation, payload):
+        """Yield native progressive updates for the Colab iframe transport."""
+        job_id=str(job_id);cancelled=threading.Event()
+        with self.jobs_lock:self.jobs[job_id]=cancelled
+        try:
+            with self.lock:
+                if operation not in ("compute","fit"):raise ValueError("Unknown streamed native operation.")
+                steps=(self.model.progressive_fit if operation=="fit" else self.model.progressive_curve)(dict(payload,workers=1))
+                for update in steps:
+                    if cancelled.is_set():raise RuntimeError("Cancelled.")
+                    if update["type"]=="work":raise RuntimeError("The serialized native kernel requested unexpected parallel work.")
+                    if update["type"]=="result":
+                        update["result"]["runtime"]="Colab native Python"
+                        update["result"]["native_python"]=True
+                    yield update
+        finally:
+            with self.jobs_lock:self.jobs.pop(job_id,None)
+
     def run(self, job_id, operation, payload):
         job_id=str(job_id);cancelled=threading.Event()
         with self.jobs_lock:self.jobs[job_id]=cancelled
@@ -139,6 +157,18 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length",str(len(data)));self.send_header("Cache-Control","no-store")
         self.end_headers();self.wfile.write(data)
 
+    def _stream(self, job_id, operation, payload):
+        self.send_response(200);self.send_header("Content-Type","application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control","no-store");self.send_header("X-Content-Type-Options","nosniff")
+        self.end_headers()
+        try:
+            for update in self.native_kernel.stream(job_id,operation,payload):
+                self.wfile.write(json.dumps(update,allow_nan=False).encode()+b"\n");self.wfile.flush()
+        except (BrokenPipeError,ConnectionResetError):return
+        except Exception as error:
+            try:self.wfile.write(json.dumps({"type":"error","error":str(error)[:900]}).encode()+b"\n");self.wfile.flush()
+            except (BrokenPipeError,ConnectionResetError):return
+
     def _serve_colab_index(self):
         text=(Path(self.directory)/"index.html").read_text()
         config='<script>globalThis.PHOEBE_COLAB_NATIVE={endpoint:new URL("./_phoebe_native/",location.href).href};</script>'
@@ -158,7 +188,7 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path=urllib.parse.urlsplit(self.path).path
-        if not self.native_kernel or path not in ("/_phoebe_native/run","/_phoebe_native/cancel"):
+        if not self.native_kernel or path not in ("/_phoebe_native/run","/_phoebe_native/stream","/_phoebe_native/cancel"):
             return self._json({"error":"Native Colab backend is unavailable."},404)
         try:
             length=int(self.headers.get("Content-Length","0"))
@@ -166,6 +196,8 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
             message=json.loads(self.rfile.read(length))
             if path.endswith("/cancel"):
                 self.native_kernel.cancel(message.get("id"));return self._json({"cancelled":True})
+            if path.endswith("/stream"):
+                return self._stream(message.get("id"),message.get("operation"),message.get("payload",{}))
             value=self.native_kernel.run(message.get("id"),message.get("operation"),message.get("payload",{}))
             try:return self._json(value)
             except (BrokenPipeError,ConnectionResetError):return

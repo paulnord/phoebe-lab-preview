@@ -29,7 +29,7 @@ const validateSurface=value=>{
 
 class ColabNativeEngine {
   constructor(config) {
-    this.config=config;this.onmessage=null;this.onerror=null;this.controllers=new Map();this.fitResults=new Map();
+    this.config=config;this.onmessage=null;this.onerror=null;this.controllers=new Map();this.gates=new Map();
   }
   emit(data){queueMicrotask(()=>this.onmessage?.({data}));}
   async request(path,body=null,controller=null){
@@ -44,10 +44,49 @@ class ColabNativeEngine {
     return record(value,'JSON');
   }
   cancel(id){
-    this.controllers.get(id)?.abort();this.controllers.delete(id);this.fitResults.delete(id);
+    this.controllers.get(id)?.abort();this.controllers.delete(id);
+    this.gates.get(id)?.();this.gates.delete(id);
     this.request('cancel',{id}).catch(()=>{});
   }
   terminate(){for(const id of [...this.controllers.keys()])this.cancel(id);}
+  pause(id){return new Promise(resolve=>this.gates.set(id,resolve));}
+  continue(id){const resolve=this.gates.get(id);if(resolve){this.gates.delete(id);resolve();}}
+  async stream(data,controller){
+    const response=await fetch(new URL('stream',this.config.endpoint),{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:data.id,operation:data.type,payload:data.payload}),signal:controller.signal,
+    });
+    if(!response.ok)throw Error(`Native kernel returned HTTP ${response.status}.`);
+    if(!response.body?.getReader)throw Error('Native kernel did not provide a progressive response stream.');
+    const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',completed=false;
+    const consume=async line=>{
+      if(!line.trim())return;
+      let update;try{update=JSON.parse(line);}catch{throw Error('Native kernel returned malformed progressive JSON.');}
+      record(update,'progressive update');
+      if(update.type==='error')throw Error(update.error||'Native progressive calculation failed.');
+      if(update.type==='fit_parameters'){
+        const parameters=record(update.parameters,'fit parameters');
+        this.emit({type:'fit_parameters',id:data.id,parameters});await this.pause(data.id);return;
+      }
+      if(update.type==='partial'){
+        if(!finiteArray(update.phases)||!finiteArray(update.model)||update.phases.length!==update.model.length)
+          throw Error('Native kernel returned an incomplete partial curve.');
+        this.emit({...update,id:data.id,operation:data.type});await this.pause(data.id);return;
+      }
+      if(update.type==='progress'){this.emit({...update,id:data.id});return;}
+      if(update.type==='result'){
+        this.emit({type:'result',id:data.id,operation:data.type,result:validateCurve({result:update.result},data.type)});completed=true;return;
+      }
+      throw Error(`Native kernel returned an unknown progressive update: ${update.type}.`);
+    };
+    while(true){
+      const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});
+      const lines=buffer.split('\n');buffer=lines.pop();for(const line of lines)await consume(line);
+      if(done)break;
+    }
+    if(buffer.trim())await consume(buffer);
+    if(!completed)throw Error('Native progressive response ended without a final result.');
+  }
   postMessage(data){
     if(data.type==='initialize'){
       this.emit({type:'status',title:'Connecting to Colab Python',detail:'Exact PHOEBE work runs in this notebook runtime, not in browser WebAssembly.'});
@@ -55,20 +94,16 @@ class ColabNativeEngine {
         .catch(error=>this.emit({type:'fatal',error:String(error)}));return;
     }
     if(data.type==='release'){this.cancel(data.id);return;}
-    if(data.type==='continue'){
-      const result=this.fitResults.get(data.id);if(!result)return;
-      this.fitResults.delete(data.id);this.emit({type:'result',id:data.id,operation:'fit',result});return;
-    }
+    if(data.type==='continue'){this.continue(data.id);return;}
     if(!['compute','fit','surface'].includes(data.type))return;
     const controller=new AbortController();this.controllers.set(data.id,controller);
     this.emit({type:'progress',id:data.id,stage:data.type==='fit'?'Fitting with native PHOEBE in Colab…':'Running native PHOEBE in Colab…'});
-    this.request('run',{id:data.id,operation:data.type,payload:data.payload},controller).then(answer=>{
+    const operation=data.type==='surface'
+      ? this.request('run',{id:data.id,operation:data.type,payload:data.payload},controller)
+      : this.stream(data,controller);
+    operation.then(answer=>{
       this.controllers.delete(data.id);
       if(data.type==='surface')this.emit({type:'surface_result',id:data.id,value:validateSurface(answer)});
-      else if(data.type==='fit'){
-        const result=validateCurve(answer,'fit');this.fitResults.set(data.id,result);
-        this.emit({type:'fit_parameters',id:data.id,parameters:result.parameters});
-      }else this.emit({type:'result',id:data.id,operation:'compute',result:validateCurve(answer,'compute')});
     }).catch(error=>{
       this.controllers.delete(data.id);
       if(error?.name==='AbortError')return;

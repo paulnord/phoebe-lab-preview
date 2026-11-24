@@ -77,6 +77,10 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
         def run(self, job_id, operation, payload):
             self.calls.append((job_id,operation,payload))
             return {"result":{"native_python":True,"runtime":"Colab native Python"}}
+        def stream(self, job_id, operation, payload):
+            self.calls.append((job_id,operation,payload,"stream"))
+            yield {"type":"partial","phases":[-.5,.5],"model":[1.,1.],"target":2}
+            yield {"type":"result","result":{"parameters":{},"phases":[-.5,.5],"model":[1.,1.],"native_python":True}}
     kernel=FakeKernel();server=launcher.start_lab(ROOT / "site",kernel=kernel)
     try:
         base=f"http://127.0.0.1:{server.server_address[1]}"
@@ -90,6 +94,12 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
         answer=json.load(urllib.request.urlopen(request,timeout=5))
         assert answer["result"]["native_python"] is True
         assert kernel.calls==[("job-7","compute",{"geometry":"contact"})]
+        stream_body=json.dumps({"id":"job-8","operation":"compute","payload":{"geometry":"semi"}}).encode()
+        stream_request=urllib.request.Request(base+"/_phoebe_native/stream",data=stream_body,
+                                              headers={"Content-Type":"application/json"})
+        updates=[json.loads(line) for line in urllib.request.urlopen(stream_request,timeout=5) if line.strip()]
+        assert [update["type"] for update in updates]==["partial","result"]
+        assert kernel.calls[-1]==("job-8","compute",{"geometry":"semi"},"stream")
     finally: launcher.stop_lab()
 
 
@@ -112,6 +122,10 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "nativeKernelConfig ? new ColabNativeEngine" in client
     assert "new Worker(workerURL,{type:'module'})" in client
     assert "PHOEBE_COLAB_NATIVE" not in html
+    assert "application/x-ndjson" in (ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()
+    assert "type==='partial'" in client and "this.pause(data.id)" in client
+    assert "green tested / amber caution / red unvalidated" in app
+    assert "!unphysicalReason() && !current" in app
 
 
 def test_commit_pinned_preview_reuses_only_generated_public_runtime():

@@ -6,6 +6,7 @@ import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
 import {requestMatches} from './request-guard.mjs?v=geometry1';
 import {createScientificEngine,nativeKernelConfig} from './engine-client.mjs?v=colab-native1';
 import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=colab-native2';
+import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
 const $ = (id) => document.getElementById(id);
 applyColabRuntimeUI(document,nativeKernelConfig);
 const DEFAULTS = {contact:false,semidetached:false,donor:'primary',inclination:84.5,radius_primary:.21,radius_secondary:.17,fillout_factor:.25,temperature_ratio:.84,mass_ratio:.75,eccentricity:0,omega:90,period:1.8,epoch:0,distortion:false,irradiation:false};
@@ -123,11 +124,11 @@ function labelCurve(text) {
     key.lastChild.textContent=dragView.savedPreview ? 'Saved PHOEBE preview' : dragView.omitted?.length ? key.title : dragView.flatSphere ? 'Spherical preview' :
       dragView.surfaceMode ? 'Preview · '+dragView.surfaceMode : 'Preview';
     const previewSwatch=key.querySelector('i');
-    previewSwatch.style.backgroundColor=dragView.exploratory ? '#b56a08' : '#6a59da';
+    previewSwatch.style.backgroundColor=previewColor(dragView);
     previewSwatch.style.opacity='.36';
     previewSwatch.style.height='7px';
   }
-  swatch.style.backgroundColor=faint && dragView.exploratory ? '#b56a08' : '';
+  swatch.style.backgroundColor=faint ? previewColor(dragView) : '';
   swatch.style.height=faint ? '8px' : '';
   swatch.style.opacity=faint ? '.36' : '';
   swatch.style.filter=faint ? 'blur(1.8px)' : '';
@@ -154,32 +155,37 @@ function secondaryOverflows(p) {
 function nearLimitLabel(p) {
   return secondaryOverflows(p)?'Secondary fills its Roche lobe at periastron':'Near Roche limit · waiting for PHOEBE';
 }
+const unphysicalReason=(p=state.parameters)=>geometryPhysicalReason(p);
+const previewTier=curve=>curve?.previewConfidence || (curve?.exploratory?'caution':'good');
+const previewColor=curve=>({good:'#248a5a',caution:'#b56a08',outside:'#c43d3d'})[previewTier(curve)]||'#b56a08';
+const withConfidence=curve=>curve ? {...curve,previewConfidence:previewTier(curve)} : null;
 function approximateView() {
   const p=state.parameters;
+  if(unphysicalReason(p))return null;
   if(p.contact){
     if(!state.dataset || !predictContact)return null;
     const curve=predictContact({...p,epoch:0});
-    return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),exploratory:true,omitted:[]} : null;
+    return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),omitted:[]} : null;
   }
   if(p.semidetached){
     if(!state.dataset || !predictSemi)return null;
     const curve=predictSemi({...p,epoch:0});
-    return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),exploratory:true,omitted:[]} : null;
+    return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),omitted:[]} : null;
   }
   const omitted=[p.distortion && 'tides',p.irradiation && 'heating'].filter(Boolean);
   if (!state.dataset || !predictDisplay || secondaryOverflows(p)) return null;
   if(nearRocheReference && Object.entries(nearRocheReference.parameters).every(([key,value])=>p[key]===value)){
     const mode=p.distortion?(p.irradiation?'tides and heating':'tides'):(p.irradiation?'heating':'spherical');
     const curve={phases:nearRocheReference.phases,model:nearRocheReference.models[mode]};
-    return {...compareDisplayCurve(curve,normalizedData()),savedPreview:true,surfaceMode:mode,omitted:[]};
+    return {...compareDisplayCurve(curve,normalizedData()),savedPreview:true,surfaceMode:mode,omitted:[],previewConfidence:'good'};
   }
   const eccentricSweep=predictEccentricSweep?.(p);
-  if(eccentricSweep)return {...eccentricSweep,...compareDisplayCurve(eccentricSweep,normalizedData()),omitted:[]};
+  if(eccentricSweep)return withConfidence({...eccentricSweep,...compareDisplayCurve(eccentricSweep,normalizedData()),omitted:[]});
   const clear = clearUnheated(p);
   if (clear && !p.distortion) {
     // Two unheated spherical photospheres present constant projected light.
     const line = {phases:[-.5,.5],model:[1,1]};
-    return {...compareDisplayCurve(line,normalizedData()),flatSphere:true,omitted:[]};
+    return {...compareDisplayCurve(line,normalizedData()),flatSphere:true,omitted:[],previewConfidence:'good'};
   }
   if (state.quality!=='preview' && !omitted.length) return null;
   // Epoch places observations in phase. The phase-domain geometry uses a relative origin.
@@ -193,7 +199,7 @@ function approximateView() {
   const curve=surface || calibratedSphere || broad || predictDisplay(sphere) || (omitted.length && inSliderRanges(sphere) && discModel(sphere));
   if (!curve) return null;
   const scaled=compareDisplayCurve(curve, normalizedData());
-  return {...curve,...scaled,exploratory:!!(omitted.length||curve.exploratory),omitted:(surface || broad) ? [] : omitted};
+  return withConfidence({...curve,...scaled,exploratory:!!(omitted.length||curve.exploratory),omitted:(surface || broad) ? [] : omitted});
 }
 
 // Both lists are sorted in phase. A single pass also handles the uneven grids
@@ -432,11 +438,12 @@ function updateControlValues() {
 }
 
 function previewLabel() {
-  if(state.parameters.contact)return 'Experimental contact surrogate · native validation required';
-  if(state.parameters.semidetached)return `Experimental semi-detached surrogate · ${state.parameters.donor} donor · native validation required`;
+  const confidence=previewTier(dragView),prefix=confidence==='good'?'Green · tested preview':confidence==='caution'?'Amber · caution preview':'Red dashed · unvalidated preview';
+  if(state.parameters.contact)return `${prefix} · contact envelope · native validation required`;
+  if(state.parameters.semidetached)return `${prefix} · semi-detached · ${state.parameters.donor} donor · native validation required`;
   if (dragView.savedPreview) return 'Saved PHOEBE preview · '+dragView.surfaceMode+' · 256 phases';
   if (dragView.flatSphere) return 'Spherical preview · no heating or eclipses';
-  return dragView?.surfaceMode ? 'Approximate surface preview · '+dragView.surfaceMode+(dragView.surfaceRegion?' · '+dragView.surfaceRegion:'')+(state.quality==='refined'?' · preview model':'') : dragView?.omitted?.length
+  return dragView?.surfaceMode ? `${prefix} · `+dragView.surfaceMode+(dragView.surfaceRegion?' · '+dragView.surfaceRegion:'')+(state.quality==='refined'?' · preview model':'') : dragView?.omitted?.length
     ? 'Approximate spherical curve · '+dragView.omitted.join(' and ')+' omitted'+(dragView.atEdge?' · atmosphere clamped':'')
     : dragView?.exploratory
     ? ['Approximate · eight-slider neural preview', dragView.periodOutside ? 'outside joint training periods' : '', dragView.atEdge ? 'atmosphere clamped' : ''].filter(Boolean).join(' · ')
@@ -449,7 +456,8 @@ function refreshPreview() {
       timingRevision===state.revision) return;
   const curve=approximateView();
   if (!curve) {
-    if(nearTidalLimit(state.parameters) || secondaryOverflows(state.parameters))labelCurve(nearLimitLabel(state.parameters));
+    if(unphysicalReason())labelCurve(unphysicalReason());
+    else if(nearTidalLimit(state.parameters) || secondaryOverflows(state.parameters))labelCurve(nearLimitLabel(state.parameters));
     return;
   }
   dragView=curve;
@@ -459,6 +467,7 @@ function refreshPreview() {
 }
 
 function unavailableReason() {
+  const invalid=unphysicalReason();if(invalid)return invalid;
   if(state.parameters.contact)return 'Contact preview unavailable outside its validated domain · release for native PHOEBE';
   if(state.parameters.semidetached)return 'Semi-detached preview unavailable outside its validated domain · release for native PHOEBE';
   if (state.quality!=='preview') return 'Drag preview unavailable · choose Preview quality';
@@ -486,8 +495,8 @@ function parametersChanged(slider=false,physics=false,key=null) {
   liveTiming=timingRevision===state.revision ? timingDisplay() : null;
   if(timingRevision===state.revision)dragView=liveTiming?.omitted ? liveTiming : null;
   else dragView=slider || physics || state.parameters.distortion || state.parameters.irradiation || clearUnheated(state.parameters) ? approximateView() : null;
-  labelCurve(dragView ? previewLabel() : liveTiming ? (liveTiming.prior?'Previous-period PHOEBE curve':'Exact PHOEBE curve · updated phases') : (nearTidalLimit(state.parameters) || secondaryOverflows(state.parameters)) ? nearLimitLabel(state.parameters) : previousExact ? 'Previous PHOEBE curve · awaiting recalculation' :
-    slider ? unavailableReason() : 'Waiting for PHOEBE');
+  labelCurve(dragView ? previewLabel() : unphysicalReason() || (liveTiming ? (liveTiming.prior?'Previous-period PHOEBE curve':'Exact PHOEBE curve · updated phases') : (nearTidalLimit(state.parameters) || secondaryOverflows(state.parameters)) ? nearLimitLabel(state.parameters) : previousExact ? 'Previous PHOEBE curve · awaiting recalculation' :
+    slider ? unavailableReason() : 'Waiting for PHOEBE'));
   if(dragView) $('plot-placeholder').hidden=true;
   status('Parameters changed · waiting for PHOEBE','busy');
   scheduleOrbitSurface();
@@ -520,6 +529,7 @@ function scheduleCompute(delay=450) {clearTimeout(computeTimer);computeTimer=set
 
 function scheduleOrbitSurface(delay=350,retry=false) {
   clearTimeout(surfaceTimer);
+  if(unphysicalReason()){orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
   const key=surfaceGeometryKey(state.parameters);
   if(!key){orbitSurface={key:null,status:'idle',mesh:null,error:null,id:null};drawOrbitViewer();return;}
   if(orbitSurface.key!==key){orbitSurface={key,status:'pending',mesh:null,error:null,id:null};drawOrbitViewer();}
@@ -687,6 +697,8 @@ function startEngine() {
 
 function requestModel(type='compute',fit=[]) {
   clearTimeout(computeTimer);
+  const invalid=unphysicalReason();
+  if(invalid){state.current=null;state.queued=false;setBusy(false);clearDisplay();$('plot-placeholder').hidden=true;labelCurve(invalid);status(invalid,'error');drawPlots();updateStats();return;}
   if(type==='compute'&&pointerHeld){state.queued=true;return;}
   if(!state.dataset)return;
   if(type==='compute' && restoreExact())return;
@@ -819,7 +831,7 @@ function drawChart(canvas,residual) {
     else if(visible?.label) sources.push(visible.label);
     $('residual-summary').textContent=sources.length ? sources.join(' + ')+' · '+comparison.phase.length+' observations' : '—';
   }
-  const reference=!current && plotSettings.previous && previousReference && previousReference!==visible?.source && previousReference.model!==visible?.model ? previousReference : null;
+  const reference=!unphysicalReason() && !current && plotSettings.previous && previousReference && previousReference!==visible?.source && previousReference.model!==visible?.model ? previousReference : null;
   if (!residual) {
     const key=$('previous-curve-key');
     const prior=reference || visible?.source;
@@ -856,7 +868,7 @@ function drawChart(canvas,residual) {
   else{ctx.save();ctx.translate(12,T+ih/2);ctx.rotate(-Math.PI/2);ctx.fillStyle='#8c8796';ctx.textAlign='center';ctx.fillText('Normalized flux',0,0);ctx.restore();}
   ctx.save();ctx.beginPath();ctx.rect(L,T,iw,ih);ctx.clip();ctx.setLineDash([]);
   if(residual && previewPoints) {
-    const color=faintPreview.exploratory ? '181,106,8' : '106,89,218';
+    const color=previewTier(faintPreview)==='good'?'36,138,90':previewTier(faintPreview)==='outside'?'196,61,61':'181,106,8';
     // A translucent outer disc distinguishes the preview under incoming PHOEBE points.
     for(const [radius,alpha] of [[4.2,.12],[1.8,.43]]) {
       ctx.fillStyle='rgba('+color+','+alpha+')';
@@ -881,8 +893,9 @@ function drawChart(canvas,residual) {
       if (!curve) continue;
       const faint=curve===faintPreview;
       const dashed=curve===reference || curve.prior;
+      const outside=faint&&previewTier(curve)==='outside';
       ctx.save();
-      ctx.strokeStyle=dashed ? '#27716e' : faint && curve.exploratory ? '#b56a08' : '#6a59da';
+      ctx.strokeStyle=dashed ? '#27716e' : faint ? previewColor(curve) : '#6a59da';
       ctx.lineWidth=faint ? 12 : dashed ? 1.8 : 2.2;
       if(faint) {
         ctx.globalAlpha=.30;
@@ -890,7 +903,7 @@ function drawChart(canvas,residual) {
         ctx.lineCap='round';
         if('filter' in ctx) ctx.filter=`blur(${2*dpr}px)`;
       }
-      ctx.setLineDash(dashed ? [6,4] : []);ctx.beginPath();
+      ctx.setLineDash(dashed||outside ? [6,4] : []);ctx.beginPath();
       curve.phases.forEach((phase,i)=>i ? ctx.lineTo(px(phase),py(curve.model[i])) : ctx.moveTo(px(phase),py(curve.model[i])));
       ctx.stroke();ctx.restore();
     }
@@ -1180,7 +1193,7 @@ fetch(new URL('../experiment/near-roche-reference.json?v=658bddb7c8e01386',impor
   .then(reference=>{nearRocheReference=reference;refreshPreview();})
   .catch(error=>console.warn('Near-lobe reference unavailable',error));
 Promise.all([
-  import('../experiment/contact-predict.mjs'),
+  import('../experiment/contact-predict.mjs?v=confidence1'),
   fetch(new URL('../experiment/contact-model.json',import.meta.url)).then(response=>{
     if(!response.ok)throw Error(response.status);
     return response.json();
@@ -1190,7 +1203,7 @@ Promise.all([
   refreshPreview();
 }).catch(error=>console.warn('Contact preview unavailable',error));
 Promise.all([
-  import('../experiment/semi-predict.mjs'),
+  import('../experiment/semi-predict.mjs?v=confidence1'),
   fetch(new URL('../experiment/semi-model.json',import.meta.url)).then(response=>{if(!response.ok)throw Error(response.status);return response.json();}),
 ]).then(([module,spec])=>{predictSemi=module.makeSemiPredictor(spec);refreshPreview();})
   .catch(error=>console.warn('Semi-detached preview unavailable',error));
@@ -1234,9 +1247,9 @@ predictDisplay=p=>joint(p) ?? paired(p) ??
     ? exploratory(p) : null);
 const coverage=document.createElement('p');
 coverage.className='muted small';
-coverage.textContent='Each geometry has a separate preview. Detached uses the purple tested slices or amber eight-slider/surface models below. Semi-detached uses donor-specific native-PHOEBE training over inclination 65–90°, q 0.40–1.30, free-star lobe filling 0.25–0.82, and T₂/T₁ 0.76–1.14. Contact uses its expanded native-PHOEBE set. Semi/contact previews require P=1.8 d, circular orbit, and irradiation off and fail closed outside their tested domains.';
+coverage.textContent='Preview confidence is separate from native fitting: green is inside tested coverage, amber is near a tested edge or sparse region, and dashed red is an explicitly unvalidated boundary-held estimate. No curve is drawn for an unphysical geometry or when no defensible estimate exists. Native PHOEBE alone supplies fit statistics and export.';
 $('parameter-controls').before(coverage);
-document.querySelector('#curve-title + span').textContent='Drag preview · purple tested / amber exploratory';
+document.querySelector('#curve-title + span').textContent='Drag preview · green tested / amber caution / red unvalidated';
 const nativeFiles=bindNativeFiles(()=>{
   if(!state.dataset || state.result?.revision!==state.revision || state.busy)
     throw Error('Wait for the current exact lab result before creating a native bundle.');

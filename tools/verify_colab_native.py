@@ -26,6 +26,11 @@ def post(base, message, timeout=900):
                                    headers={"Content-Type":"application/json"})
     return json.load(urllib.request.urlopen(request,timeout=timeout))
 
+def stream(base,message,timeout=900):
+    request=urllib.request.Request(base+"/_phoebe_native/stream",data=json.dumps(message).encode(),
+                                   headers={"Content-Type":"application/json"})
+    return [json.loads(line) for line in urllib.request.urlopen(request,timeout=timeout) if line.strip()]
+
 
 def main():
     server=launcher.start_lab(ROOT / "site")
@@ -34,12 +39,19 @@ def main():
     report={"status":json.load(urllib.request.urlopen(base+"/_phoebe_native/status")),"checks":[]}
     try:
         def run(name,operation,payload):
-            started=time.perf_counter();answer=post(base,{"id":name,"operation":operation,"payload":payload})
+            started=time.perf_counter()
+            if operation in ("compute","fit"):
+                updates=stream(base,{"id":name,"operation":operation,"payload":payload})
+                assert updates[-1]["type"]=="result"
+                answer={"result":updates[-1]["result"],"updates":updates}
+            else:answer=post(base,{"id":name,"operation":operation,"payload":payload})
             elapsed=time.perf_counter()-started
             report["checks"].append({"name":name,"operation":operation,"seconds":elapsed,
                                       "runtime":answer.get("runtime"),
                                       "phases":len(answer.get("result",{}).get("phases",[])),
                                       "native_python":answer.get("result",{}).get("native_python"),
+                                      "updates":[update["type"] for update in answer.get("updates",[])],
+                                      "partial_phases":[len(update["phases"]) for update in answer.get("updates",[]) if update["type"]=="partial"],
                                       "surface_geometry":answer.get("value",{}).get("geometry"),
                                       "has_neck":answer.get("value",{}).get("neck") is not None})
             return answer
