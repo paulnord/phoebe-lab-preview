@@ -81,22 +81,28 @@ function canvasSpace(canvas) {
   return {ctx,w,h};
 }
 
+export function detachedOrbitRadius(p, extents=[p.radius_primary,p.radius_secondary]) {
+  const factors=[p.mass_ratio/(1+p.mass_ratio),1/(1+p.mass_ratio)],apastron=1+p.eccentricity;
+  return Math.max(.01,...factors.map((factor,k)=>factor*apastron+extents[k]));
+}
+
+export function orthographicScale(width,height,radius,zoom=1) {
+  const factor=Math.max(.6,Math.min(1.8,Number.isFinite(zoom)?zoom:1));
+  return Math.min((width-24)/(2*radius),(height-54)/(2*radius))*factor;
+}
+
 function orbitPainter(p, view, surface) {
   const camera=orbitCamera(p,view),position=orbitProjection(p,view), paths=[[],[]], radii=[p.radius_primary,p.radius_secondary];
   const extents=surface?.extents??radii;
-  let extentX=0,extentY=0;
   for(let j=0;j<144;j++){
-    position(j/144).stars.forEach((star,k)=>{
-      paths[k].push(star);
-      extentX=Math.max(extentX,Math.abs(star.x)+extents[k]);
-      extentY=Math.max(extentY,Math.abs(star.y)+extents[k]);
-    });
+    position(j/144).stars.forEach((star,k)=>paths[k].push(star));
   }
-  return (canvas,phase)=>{
+  const radius=detachedOrbitRadius(p,extents);
+  return (canvas,phase,zoom=1)=>{
     const box=canvasSpace(canvas);if(!box)return;
     const {ctx,w,h}=box,arrow=camera.earthDirection;
-    const top=8, bottom=arrow?46:8, cy=(h+top-bottom)/2;
-    const scale=Math.min((w-24)/(2*extentX),(h-top-bottom)/(2*extentY));
+    const top=8,bottom=46,cy=(h+top-bottom)/2;
+    const scale=orthographicScale(w,h,radius,zoom);
     if(!(scale>0))return;
     const px=x=>w/2+x*scale,py=y=>cy+y*scale;
     paths.forEach((path,k)=>{
@@ -160,19 +166,23 @@ export function projectNativeSurface(mesh,p,phase,view) {
 
 export const nativeTrianglePaintOrder=triangles=>[...triangles].sort((a,b)=>a.depth-b.depth);
 
+export function nativeOrbitRadius(mesh,p) {
+  const projected=projectNativeSurface(mesh,p,0,'above');
+  return Math.max(.01,...projected.triangles.flatMap(triangle=>triangle.points.map(point=>Math.hypot(...point))));
+}
+
 function nativeOrbitPainter(p,view,mesh) {
   const camera=orbitCamera(p,view),position=orbitProjection(p,view),paths=[[],[]];
-  let extentX=.7,extentY=.7;
   for(let j=0;j<72;j++){
-    const phase=j/72,pos=position(phase),projected=projectNativeSurface(mesh,p,phase,view);
+    const phase=j/72,pos=position(phase);
     pos.stars.forEach((star,k)=>paths[k].push(star));
-    for(const {points} of projected.triangles)for(const point of points){extentX=Math.max(extentX,Math.abs(point[0]));extentY=Math.max(extentY,Math.abs(point[1]));}
   }
-  return (canvas,phase)=>{
+  const radius=nativeOrbitRadius(mesh,p);
+  return (canvas,phase,zoom=1)=>{
     const box=canvasSpace(canvas);if(!box)return;
     const {ctx,w,h}=box,arrow=camera.earthDirection;
-    const top=8,bottom=arrow?46:8,cy=(h+top-bottom)/2;
-    const scale=Math.min((w-24)/(2*extentX),(h-top-bottom)/(2*extentY));
+    const top=8,bottom=46,cy=(h+top-bottom)/2;
+    const scale=orthographicScale(w,h,radius,zoom);
     const px=x=>w/2+x*scale,py=y=>cy+y*scale;
     paths.forEach((path,k)=>{
       ctx.strokeStyle=colors[k]+'55';ctx.setLineDash([4,4]);ctx.beginPath();
@@ -232,12 +242,17 @@ export function bindOrbitViewer(readModel,ensureSurface=()=>{},setDetail=()=>{})
   const id=name=>document.getElementById('orbit-'+name);
   const dialog=id('dialog'), speed=id('speed'),scrub=id('phase'),play=id('play'),view=id('view'),detail=id('detail');
   const cameraControls=id('camera'),azimuth=id('azimuth'),elevation=id('elevation'),cameraReadout=id('camera-readout'),sky=id('sky');
+  const zoom=id('zoom'),zoomReadout=id('zoom-readout'),zoomReset=id('zoom-reset');
   const motion=matchMedia('(prefers-reduced-motion: reduce)');
   let playing=false,phase=0,last=0,frame=0,key='',paint,launcher,lastAvailable=null,drag=null;
   const cameraView=()=>view.value==='free'?{mode:'free',azimuth:Number(azimuth.value),elevation:Number(elevation.value)}:view.value;
   function syncCameraControls(){
     cameraControls.hidden=view.value!=='free';
     cameraReadout.textContent=`Azimuth ${Number(azimuth.value).toFixed(0)}° · elevation ${Number(elevation.value).toFixed(0)}°`;
+  }
+  function syncZoom(){
+    const percent=Math.round(Number(zoom.value)*100);
+    zoomReadout.textContent=percent+'%';zoom.setAttribute('aria-valuetext',percent+'%');
   }
   const setPlaying=value=>{playing=value;last=0;play.textContent=value?'Pause':'Play';};
   function draw(){
@@ -264,7 +279,7 @@ export function bindOrbitViewer(readModel,ensureSurface=()=>{},setDetail=()=>{})
         'Detached Roche surfaces are unavailable for these settings. Showing round disk radii instead.' :
         'Round disks (tidal distortion off). Heating is not shown.';
     }
-    paint(sky,phase);
+    paint(sky,phase,Number(zoom.value));
     const i=p.inclination.toFixed(1);
     id('inclination').textContent=view.value==='above'?
       (overheadEarthDirection(p.inclination)?'Inclination '+i+'°. Arrow shows only the part of the Earth direction in the orbital plane.':'Inclination '+i+'°. Earth lies along the orbital pole, so there is no in-plane arrow.'):
@@ -297,6 +312,8 @@ export function bindOrbitViewer(readModel,ensureSurface=()=>{},setDetail=()=>{})
   view.addEventListener('change',()=>{syncCameraControls();draw();});
   detail.addEventListener('change',()=>{key='';setDetail(detail.value);draw();});
   for(const control of [azimuth,elevation])control.addEventListener('input',()=>{syncCameraControls();draw();});
+  zoom.addEventListener('input',()=>{syncZoom();draw();});
+  zoomReset.addEventListener('click',()=>{zoom.value='1';syncZoom();draw();zoom.focus();});
   sky.addEventListener('pointerdown',event=>{
     const {parameters:p}=readModel();
     if(view.value!=='free'){
@@ -324,6 +341,6 @@ export function bindOrbitViewer(readModel,ensureSurface=()=>{},setDetail=()=>{})
   });
   motion.addEventListener('change',()=>{if(motion.matches && dialog.open)run(false);});
   new ResizeObserver(draw).observe(id('sky'));
-  syncCameraControls();
+  syncCameraControls();syncZoom();
   return draw;
 }

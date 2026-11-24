@@ -174,6 +174,10 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "requestFullscreen" in app and "document.fullscreenElement" in app
     assert "window.open(location.href" in app and "opened.opener=null" in app
     assert "windowButton.disabled=true" in mode
+    assert "workers.value='1'" in mode and "workers.hidden=true" in mode
+    assert "Fixed at one PHOEBE worker" in mode and "1 native worker" in mode
+    assert "disabled=colabNativeMode||fitting" in app
+    assert 'View / orientation <select id="orbit-view"' in html
     launcher=(ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()
     assert "output.serve_kernel_port_as_iframe(port, height=height)" in launcher
     assert "google.colab.kernel.proxyPort" not in launcher

@@ -315,6 +315,10 @@
 .orbit-controls label { font-size: 12px; }
 .orbit-controls select { padding: 5px; border: 1px solid var(--line); background: white; }
 .orbit-controls .button { min-width: 70px; justify-content: center; padding: 7px 12px; }
+.orbit-zoom { display: grid; grid-template-columns: auto minmax(75px,110px) 34px auto; align-items: center; gap: 5px; font-size: 12px; }
+.orbit-zoom input { min-width: 75px; accent-color: var(--purple); }
+.orbit-zoom output { color: var(--muted); font-size: 10px; text-align: right; }
+.orbit-zoom .text-button { padding: 3px 5px; font-size: 10px; }
 .orbit-camera { flex: 1 1 100%; display: grid; grid-template-columns: minmax(150px,1fr) minmax(150px,1fr) auto; align-items: center; gap: 6px 12px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: #faf9fd; }
 .orbit-camera label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px; }
 .orbit-camera input { min-width: 80px; accent-color: var(--purple); }

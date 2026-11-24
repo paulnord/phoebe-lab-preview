@@ -1,11 +1,11 @@
-import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=camera-detail1';
+import {bindOrbitViewer,surfaceGeometryKey} from './orbit-viewer.mjs?v=frame-zoom1';
 import {bindSolveOrbit,bindStarGuide} from './stellar-shapes.mjs?v=camera-detail1';
 import {clearSeparation, supported as detachedWithin} from '../experiment/regional-surface.mjs?v=8d3e42c13d757728';
 import {bindVelocityPlot,parseVelocity,validateVelocity} from './radial-velocity.mjs?v=f528f9d33a0f0306';
 import {bindNativeFiles} from './native-files.js?v=3b11b7a04ffb63a2';
 import {requestMatches} from './request-guard.mjs?v=geometry1';
 import {createScientificEngine,nativeKernelConfig,nativeKernelRequired} from './engine-client.mjs?v=colab-native2';
-import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=colab-native3';
+import {applyColabRuntimeUI,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-ui1';
 import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
 const $ = (id) => document.getElementById(id);
 const colabNativeMode=nativeKernelRequired;
@@ -581,7 +581,7 @@ function setBusy(busy,fitting=false) {
   $('stop-button').hidden=!busy;
   document.querySelectorAll('.quality').forEach(button=>{button.disabled=fitting;});
   $('tidal-phases').disabled=fitting;
-  $('surface-workers').disabled=fitting;Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
+  $('surface-workers').disabled=colabNativeMode||fitting;Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
   $('example-choice').disabled=fitting;
   $('import-button').disabled=fitting;$('example-button').disabled=fitting || modeOf(state.parameters)!=='detached';$('reset-button').disabled=fitting;
   for(const {number,range} of parameterInputs.values()) {number.disabled=fitting;if(range)range.disabled=fitting;}

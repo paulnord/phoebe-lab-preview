@@ -70,11 +70,18 @@ window.Worker=DeterministicWorker;
     assert before!=after
     expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 1500 PHOEBE ntriangles",timeout=12000)
     assert page.evaluate("surfaceRequests.at(-1).triangles")==1500
+    assert "View / orientation" in page.locator(".orbit-controls").inner_text()
+    zoom_before=canvas.evaluate("el=>Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data).reduce((s,v)=>s+v,0)")
+    page.locator("#orbit-zoom").fill("1.35")
+    expect(page.locator("#orbit-zoom-readout")).to_have_text("135%")
+    zoom_after=canvas.evaluate("el=>Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data).reduce((s,v)=>s+v,0)")
+    assert zoom_before!=zoom_after
     page.locator("#orbit-detail").select_option("preview")
     expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail is regenerating")
     expect(page.locator("#orbit-shape-note")).to_contain_text("Preview detail · 500 PHOEBE ntriangles",timeout=12000)
     page.locator("#orbit-detail").select_option("high")
     expect(page.locator("#orbit-shape-note")).to_contain_text("High detail · 1500 PHOEBE ntriangles",timeout=12000)
+    expect(page.locator("#orbit-zoom")).to_have_value("1.35")
     # Every geometry shares the presets, explicit free-camera controls and drag rotation.
     assert page.locator("#orbit-view option").all_text_contents()==["From Earth","Above orbit","Free orbit camera"]
     page.locator("#orbit-view").select_option("free")
@@ -86,6 +93,7 @@ window.Worker=DeterministicWorker;
     box=canvas.bounding_box();page.mouse.move(box["x"]+box["width"]*.45,box["y"]+box["height"]*.45)
     page.mouse.down();page.mouse.move(box["x"]+box["width"]*.65,box["y"]+box["height"]*.55);page.mouse.up()
     assert float(page.locator("#orbit-azimuth").input_value())!=azimuth
+    expect(page.locator("#orbit-zoom")).to_have_value("1.35")
     page.locator("#orbit-close").click()
     page.locator("#geometry-contact").check()
     page.locator(".orbit-launch").click()
@@ -93,8 +101,19 @@ window.Worker=DeterministicWorker;
     expect(page.locator("#orbit-view")).to_have_value("free")
     expect(page.locator("#orbit-camera")).to_be_visible()
     expect(page.locator("#orbit-phase")).to_have_value("0.25")
+    expect(page.locator("#orbit-zoom")).to_have_value("1.35")
     assert page.evaluate("surfaceMeshes.at(-1).neck") == .5
     page.locator("#orbit-close").click()
+    page.locator("#geometry-detached").check()
+    page.locator(".orbit-launch").click()
+    expect(page.locator("#orbit-view")).to_have_value("free")
+    expect(page.locator("#orbit-camera")).to_be_visible()
+    expect(page.locator("#orbit-zoom")).to_have_value("1.35")
+    page.locator("#orbit-zoom-reset").click()
+    expect(page.locator("#orbit-zoom")).to_have_value("1")
+    expect(page.locator("#orbit-zoom-readout")).to_have_text("100%")
+    page.locator("#orbit-close").click()
+    page.locator("#geometry-contact").check()
     # A relevant contact control rebuilds and exposes an honest error state.
     page.evaluate("failNextSurface=true")
     page.locator('[data-parameter="fillout_factor"] input[type="number"]').fill("0.3")

@@ -15,6 +15,11 @@ export function applyColabRuntimeUI(doc,config){
   nativeButton.disabled=true;nativeButton.title='The separate PHOEBE file workspace is available in the standalone browser build.';
   const windowButton=doc.getElementById('window-button');
   windowButton.disabled=true;windowButton.title='Colab no longer provides a reliable app-only kernel-port window. Fullscreen remains available when the host grants iframe permission.';
+  const workers=doc.getElementById('surface-workers'),workerRow=workers.closest('label');
+  workers.value='1';workers.disabled=true;workers.hidden=true;
+  workerRow.querySelector('strong').textContent='Native compute worker';
+  workerRow.querySelector('small').textContent='Fixed at one PHOEBE worker in this notebook runtime.';
+  const workerValue=doc.createElement('span');workerValue.id='surface-workers-value';workerValue.className='mono';workerValue.textContent='1 native worker';workerRow.append(workerValue);
   doc.getElementById('data-file').accept='.csv,.tsv,.txt,.dat,.json';
   doc.querySelector('label[for="data-file"] span:last-of-type').textContent='CSV, TSV, TXT, or PHOEBE Lab session JSON';
   const runtimeGuide=[...doc.querySelectorAll('#guide-dialog p')].find(p=>p.textContent.includes('What is actually running?'));

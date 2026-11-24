@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {orbitCamera, orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface, nativeTrianglePaintOrder} from '../site/assets/orbit-viewer.mjs';
+import {orbitCamera, orbitProjection, overheadEarthDirection, fluxAtPhase, foldPhase, surfaceGeometryKey, projectNativeSurface, nativeTrianglePaintOrder, detachedOrbitRadius, nativeOrbitRadius, orthographicScale} from '../site/assets/orbit-viewer.mjs';
 import {tidalOutline, tidalSurfaceModel} from "../site/assets/stellar-shapes.mjs";
 
 const p={eccentricity:0,omega:90,inclination:90,mass_ratio:.75};
@@ -61,6 +61,14 @@ assert.strictEqual(tide,tidalSurfaceModel({...tideParams,omega:20,inclination:76
 const highTide=tidalSurfaceModel(tideParams,'high');
 assert.ok(highTide.directions.length>tide.directions.length,'high detail samples a denser physical Roche surface');
 assert.strictEqual(highTide,tidalSurfaceModel({...tideParams,omega:20,inclination:76},'high'),'high-detail Roche samples are cached independently of the camera');
+const detachedBound=detachedOrbitRadius(tideParams,highTide.extents);
+for(const view of ['earth','above',freeView])for(const phase of [0,.13,.25,.5,.79]){
+  const projected=orbitProjection(tideParams,view)(phase);
+  projected.stars.forEach((star,k)=>assert.ok(Math.hypot(star.x,star.y)+highTide.extents[k]<=detachedBound+1e-11,
+    'the fixed 3D detached bound contains every projected camera orientation and phase'));
+}
+const baseScale=orthographicScale(700,300,detachedBound,1);
+compare(orthographicScale(700,300,detachedBound,1.35),baseScale*1.35);
 const span=(outline,axis)=>Math.max(...outline.map(v=>v[axis]))-Math.min(...outline.map(v=>v[axis]));
 for(const k of [0,1]){
   const above=orbitProjection(tideParams,'above');
@@ -96,6 +104,12 @@ assert.equal(surfaceGeometryKey({...semiParams,inclination:70,temperature_ratio:
 assert.notEqual(surfaceGeometryKey(semiParams),surfaceGeometryKey({...semiParams,radius_secondary:.2}),'free radius rebuilds semi mesh');
 const semi0=projectNativeSurface(semiMesh,semiParams,0,'above');
 const semiQuarter=projectNativeSurface(semiMesh,semiParams,.25,'above');
+const semiBound=nativeOrbitRadius(semiMesh,semiParams);
+for(const view of ['earth','above',freeView])for(const phase of [0,.25,.5,.75]){
+  const projected=projectNativeSurface(semiMesh,semiParams,phase,view);
+  for(const triangle of projected.triangles)for(const point of triangle.points)
+    assert.ok(Math.hypot(...point)<=semiBound+1e-11,'the fixed 3D native bound contains every camera orientation and phase');
+}
 assert.equal(semi0.triangles.length,2);
 const range=(triangle,axis)=>Math.max(...triangle.points.map(v=>v[axis]))-Math.min(...triangle.points.map(v=>v[axis]));
 assert.ok(range(semi0.triangles[0],1)>range(semi0.triangles[0],0),'phase zero line of centers is vertical overhead');
