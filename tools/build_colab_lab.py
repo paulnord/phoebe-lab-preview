@@ -1,4 +1,4 @@
-"""Build the Colab launcher for the actual PHOEBE Lab web interface."""
+"""Build the PHOEBE Lab UI whose exact Compute and Fit run in Colab Python."""
 from pathlib import Path
 import nbformat as nbf
 
@@ -14,7 +14,7 @@ nb["metadata"] = {
 nb["cells"] = [
     nbf.v4.new_markdown_cell("""# PHOEBE Lab — Colab
 
-This is the familiar PHOEBE Lab workbench, not a second widget interface. It has the same observation loader, light curve and residual plots, radial-velocity view, model controls, bounded native fit, authoritative export, and orbit viewer as the standalone page.
+The PHOEBE Lab workbench includes observation loading, light-curve and residual plots, a radial-velocity view, geometry controls, bounded native fitting, authoritative export, and an orbit viewer.
 
 Choose **Detached**, **Semi-detached**, or **Contact** at the top of the model panel. Semi-detached exposes the donor choice and one free-star radius; contact exposes the shared-envelope fill-out factor. Trained curves remain display-only. Explicit compute and fit actions use PHOEBE and invalidate stale statistics/export whenever the data, geometry, donor, or parameters change.
 
@@ -32,7 +32,7 @@ assert phoebe.__version__ == "2.5.4", phoebe.__version__
 print("Native PHOEBE",phoebe.__version__,"·",sys.executable)
 """),
     nbf.v4.new_code_cell(LAUNCHER),
-    nbf.v4.new_code_cell("""# Re-run this cell to restart a clean copy of the same PHOEBE Lab interface.
+    nbf.v4.new_code_cell("""# Re-run this cell to restart the PHOEBE Lab server and interface.
 lab_server = show_lab(height=1050)
 """),
     nbf.v4.new_markdown_cell("""## Runtime notes
@@ -41,8 +41,8 @@ lab_server = show_lab(height=1050)
 - Native Colab curves arrive in genuine PHOEBE phase batches, so the plot fills in progressively before the authoritative final normalization/statistics/export result.
 - **Local Jupyter/classic:** supported when the browser and kernel share the same computer. Run the notebook from a repository checkout to use its local `site/` files.
 - **Remote JupyterLab:** direct loopback iframes may be blocked by the deployment. Use Colab or the standalone page unless that server provides a loopback proxy.
-- **Standalone preview:** continues to use PHOEBE WebAssembly in its browser worker; this notebook transport does not alter it.
-- The separate `PHOEBE_Semi_Detached_Validation.ipynb` remains the reproducibility report; it is not the fitting interface.
+- **Standalone preview:** uses PHOEBE WebAssembly in its browser worker, independently of this notebook's native bridge.
+- Use `PHOEBE_Semi_Detached_Validation.ipynb` for training reproducibility and this notebook for interactive fitting.
 """),
 ]
 out = ROOT / "notebooks" / "PHOEBE_Semi_Detached_Binary_Colab.ipynb"

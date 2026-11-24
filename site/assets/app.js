@@ -505,9 +505,8 @@ function parametersChanged(slider=false,physics=false,key=null) {
   if(!pointerHeld){
     if(interrupt){
       clearTimeout(computeTimer);clearTimeout(engineRestartTimer);
-      // A running PHOEBE surface generator cannot be cancelled cooperatively:
-      // its worker must be replaced. Let rapid geometry clicks settle first so
-      // we create only one new Pyodide/WASM interpreter for the final mode.
+      // Surface generation cannot be cancelled cooperatively. Delay engine
+      // replacement until rapid geometry changes settle on one final mode.
       engineRestartTimer=setTimeout(()=>{
         engineRestartTimer=null;
         const current=state.current;
@@ -1145,7 +1144,7 @@ const {makeEightPredictor}=await import('../experiment/eight_predict.mjs');
 const eightSpec=await (await fetch(new URL('../experiment/eight.json',import.meta.url))).json();
 const discModel=makeDiscModel(artifact.table,artifact.n,artifact.fixed);
 const exploratory=makeEightPredictor(eightSpec,discModel);
-// The optional drag artifact can load alongside the exact lab.
+// Surface-preview assets load independently; exact calculations do not depend on them.
 Promise.all([
   import('../experiment/surface_predict.mjs?v=e7747d141ba9063d'),
   fetch(new URL('../experiment/surface.json',import.meta.url)).then(response=>{

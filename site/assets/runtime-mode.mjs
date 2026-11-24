@@ -16,6 +16,6 @@ export function applyColabRuntimeUI(doc,config){
   doc.getElementById('data-file').accept='.csv,.tsv,.txt,.dat,.json';
   doc.querySelector('label[for="data-file"] span:last-of-type').textContent='CSV, TSV, TXT, or PHOEBE Lab session JSON';
   const runtimeGuide=[...doc.querySelectorAll('#guide-dialog p')].find(p=>p.textContent.includes('What is actually running?'));
-  if(runtimeGuide)runtimeGuide.innerHTML='<strong>What is actually running?</strong> Instant trained previews and orbit playback run in this browser. Exact light curves, bounded fits, residual statistics, CSV results, and native surface meshes run with PHOEBE 2.5.4 in this Colab notebook’s native Python process. Changing geometry or donor cancels or supersedes the old request and invalidates its exact statistics/export. The standalone page instead uses the reviewed WebAssembly worker.';
+  if(runtimeGuide)runtimeGuide.innerHTML='<strong>What is actually running?</strong> Instant trained previews and orbit playback run in this browser. Exact light curves, bounded fits, residual statistics, CSV results, and native surface meshes run with PHOEBE 2.5.4 in this Colab notebook’s native Python process. Changing geometry or donor supersedes in-progress work and invalidates its exact statistics/export. The standalone page uses the reviewed WebAssembly worker.';
   return true;
 }

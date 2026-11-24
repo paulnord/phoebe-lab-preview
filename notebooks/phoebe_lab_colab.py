@@ -1,8 +1,12 @@
-"""Launch the familiar PHOEBE Lab web workbench inside Colab or Jupyter.
+"""Run PHOEBE Lab Compute and Fit in this notebook's native Python PHOEBE runtime.
 
-The repository source supplies the interface and geometry-specific models. Large
-browser-runtime files that are intentionally excluded from git are transparently
-proxied from the published PHOEBE Lab site at the same origin as the iframe.
+The browser renders the workbench controls, trained previews, and orbit playback.
+Exact curves, bounded fits, residual statistics, exports, and native surface meshes
+use the notebook's Python bridge and never fall back to browser WebAssembly.
+
+The feature branch supplies the interface and geometry-specific models. Static support
+files omitted from git may be proxied from the published site for display or download
+compatibility; that asset proxy never handles scientific Compute or Fit requests.
 """
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -99,7 +103,7 @@ def find_local_site(start=None):
 
 
 def download_feature_site(url=SOURCE_ARCHIVE):
-    """Download the feature-branch source used by a standalone Colab runtime."""
+    """Download the feature-branch site when no local checkout is available."""
     global _download_root
     request = urllib.request.Request(url, headers={"User-Agent": "PHOEBE-Lab-Colab"})
     with urllib.request.urlopen(request, timeout=120) as response:
@@ -115,7 +119,7 @@ def download_feature_site(url=SOURCE_ARCHIVE):
 
 
 class LabOverlayHandler(SimpleHTTPRequestHandler):
-    """Serve branch UI files locally and proxy omitted runtime assets."""
+    """Serve the branch UI and native bridge, proxying only omitted static assets."""
     published_base = PUBLISHED_BASE
     native_kernel = None
 
@@ -231,7 +235,7 @@ def start_lab(site=None, kernel=None):
 
 
 def show_lab(height=1050, site=None):
-    """Render the same PHOEBE Lab workbench used by the standalone page."""
+    """Display the PHOEBE Lab workbench served by this notebook kernel."""
     server = start_lab(site)
     port = server.server_address[1]
     try:

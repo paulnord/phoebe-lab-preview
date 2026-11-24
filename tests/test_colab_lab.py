@@ -57,15 +57,18 @@ def test_missing_runtime_files_are_proxied_from_published_origin(tmp_path):
         launcher.LabOverlayHandler.published_base = prior
 
 
-def test_generated_notebook_is_the_familiar_lab_not_widget_replacement():
+def test_generated_notebook_exposes_full_lab_and_native_runtime():
     notebook = nbformat.read(ROOT / "notebooks" / "PHOEBE_Semi_Detached_Binary_Colab.ipynb", as_version=4)
     source = "\n".join(cell.source for cell in notebook.cells)
-    assert "same PHOEBE Lab workbench" in source
+    assert "observation loading" in source and "bounded native fitting" in source
     assert "show_lab(height=1050)" in source
     assert "LabOverlayHandler" in source
     assert 'phoebe==2.5.4' in source
     assert "Colab native Python" in source
     assert "exact curves, fits, and native surface meshes" in source
+    assert "Run PHOEBE Lab Compute and Fit in this notebook's native Python PHOEBE runtime" in source
+    assert "never fall back to browser WebAssembly" in source
+    assert "asset proxy never handles scientific Compute or Fit requests" in source
     assert "BinaryFitterApp" not in source and "ToggleButtons" not in source
 
 
