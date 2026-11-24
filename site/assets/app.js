@@ -25,7 +25,7 @@ const GROUPS = [
   ]},
 ];
 const state = {parameters:{...DEFAULTS},quality:'preview',dataset:null,result:null,revision:0,ready:false,busy:false,fitting:false,queued:false,worker:null,request:0,current:null};
-let computeTimer,toastTimer,parsedFile,exampleRequest=0;
+let computeTimer,engineRestartTimer,toastTimer,parsedFile,exampleRequest=0;
 const parameterInputs = new Map();
 let predictEccentricSweep = null, eccentricSweepSpec = null;
 let predictNear = null, nearRocheReference = null, predictBroad = null, predictTemperature = null, predictSurface = null, predictRegional = null, predictDisplay = null, predictContact = null, predictSemi = null, dragView = null, pointerHeld = false;
@@ -474,7 +474,7 @@ function parametersChanged(slider=false,physics=false,key=null) {
   $('preview-agreement').hidden=true;
   const interrupt=physics && state.current?.type==='compute' &&
     (state.current.mode!==modeOf(state.parameters) || (state.current.tides && !state.parameters.distortion) || (state.current.heating && !state.parameters.irradiation));
-  if(interrupt)startEngine();
+  if(physics && key==='geometry' && !interrupt){clearTimeout(engineRestartTimer);engineRestartTimer=null;}
   exactPartial=null;
   state.revision++;
   $('export-button').disabled=true;
@@ -490,6 +490,21 @@ function parametersChanged(slider=false,physics=false,key=null) {
   scheduleOrbitSurface();
   drawPlots();updateStats();
   if(!pointerHeld){
+    if(interrupt){
+      clearTimeout(computeTimer);clearTimeout(engineRestartTimer);
+      // A running PHOEBE surface generator cannot be cancelled cooperatively:
+      // its worker must be replaced. Let rapid geometry clicks settle first so
+      // we create only one new Pyodide/WASM interpreter for the final mode.
+      engineRestartTimer=setTimeout(()=>{
+        engineRestartTimer=null;
+        const current=state.current;
+        if(current?.type==='compute' && current.mode!==modeOf(state.parameters))startEngine();
+        else if(state.busy)state.queued=true;
+        else requestModel('compute');
+      },500);
+      status('Geometry changed · safely stopping the previous PHOEBE model','busy');
+      return;
+    }
     if(!slider && restoreExact()){
       if(engineFailed){startEngine();restoreExact();}
       return;
@@ -533,6 +548,7 @@ function setBusy(busy,fitting=false) {
 }
 
 function startEngine() {
+  clearTimeout(engineRestartTimer);engineRestartTimer=null;
   clearDisplay();exactPartial=null;engineFailed=false;
   clearInterval(elapsedTimer);
   if(state.worker)state.worker.terminate();
@@ -542,7 +558,7 @@ function startEngine() {
   $('engine-banner').hidden=false;$('engine-retry').hidden=true;
   $('engine-pill').innerHTML='<span class="status-dot loading"></span>Loading engine';
   status('Starting the browser engine…','busy');
-  state.worker=new Worker(new URL('./engine.worker.js?v=native-surfaces1',import.meta.url),{type:'module'});
+  state.worker=new Worker(new URL('./engine.worker.js?v=switch-safe1',import.meta.url),{type:'module'});
   const worker=state.worker;
   state.worker.onmessage=({data})=>{
     if(worker!==state.worker)return;

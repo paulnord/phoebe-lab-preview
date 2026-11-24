@@ -72,3 +72,12 @@ def test_commit_pinned_preview_reuses_only_generated_public_runtime():
     # Model and wrapper source must remain the reviewed branch files.
     assert 'new URL("../engine/model.py", self.location.href)' in worker
     assert "../engine/advanced.py" in worker and "../engine/native_files.py" in worker
+
+
+def test_geometry_switches_coalesce_worker_restarts():
+    app = (ROOT / "site" / "assets" / "app.js").read_text()
+    assert "engineRestartTimer=setTimeout" in app
+    assert "},500);" in app
+    assert "if(interrupt)startEngine()" not in app
+    assert "current.mode!==modeOf(state.parameters)" in app
+    assert "Geometry changed · safely stopping the previous PHOEBE model" in app
