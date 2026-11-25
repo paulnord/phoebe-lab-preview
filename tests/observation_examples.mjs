@@ -17,7 +17,11 @@ const contactData=observationDataset(contact,parsed(contact));
 
 assert.equal(semiData.x.length,437);assert.equal(contactData.x.length,690);
 assert.equal(semiData.period,.8180837);assert.equal(semiData.epoch,2454588.167997);
-assert.equal(contactData.period,.305371);assert.equal(contactData.epoch,2454842.3470);
+assert.equal(contactData.period,.305371);assert.equal(contactData.epoch,2454842.4996855);
+assert.equal(contact.published_primary_epoch,2454842.3470);
+assert.ok(Math.abs((contact.epoch-contact.published_primary_epoch)-contact.period/2)<1e-9);
+assert.equal(contactData.provenance.published_primary_epoch_hjd,2454842.3470);
+assert.match(contactData.provenance.model_alignment,/one half-period later/);
 assert.equal(semi.parameters.semidetached,true);assert.equal(semi.parameters.donor,'secondary');
 assert.equal(semi.parameters.radius_primary,.318);assert.equal(semi.parameters.mass_ratio,.4715);
 assert.equal(contact.parameters.contact,true);assert.equal(contact.parameters.mass_ratio,.534);

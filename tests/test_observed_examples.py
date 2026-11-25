@@ -46,4 +46,8 @@ def test_published_ephemerides_cover_both_orbits_without_phase_columns():
     assert "publishes neither" in note
     assert "No phase column is stored" in note
     assert "No radial-velocity file is bundled" in note
+    assert "HJD 2454842.3470" in note
+    assert "HJD 2454842.4996855" in note
+    assert "does not revise the published timing or invert q" in note
+    assert "PHOEBE epoch conventions" in note
 

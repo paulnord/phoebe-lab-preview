@@ -126,7 +126,10 @@ Regenerate the 30° example with native PHOEBE using `python tools/generate_non_
 The same picker also includes two published Johnson V datasets. **SZ Her**
 selects Semi-detached with the secondary donor and the observing-run ephemeris;
 **V1128 Tau** selects Contact and uses its spectroscopic mass ratio of 0.534 as
-starting guidance. These entries contain the original timestamps and
+starting guidance. Its published deeper-minimum epoch remains HJD 2454842.3470;
+the preset initializes PHOEBE `t0_supconj` one half-period later at HJD
+2454842.4996855 to align the model conjunction convention, without changing q
+or any observation timestamp. These entries contain the original timestamps and
 differential magnitudes without invented point uncertainties. Loading starts a
 native forward calculation, never an automatic fit. See
 [`site/examples/OBSERVATIONS.md`](site/examples/OBSERVATIONS.md) for provenance,

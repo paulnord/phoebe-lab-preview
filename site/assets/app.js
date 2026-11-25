@@ -7,7 +7,7 @@ import {requestMatches} from './request-guard.mjs?v=geometry1';
 import {createScientificEngine,nativeKernelConfig,nativeKernelRequired} from './engine-client.mjs?v=colab-native2';
 import {applyColabRuntimeUI,applyColabWorkerStatus,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-capacity1';
 import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
-import {OBSERVATION_EXAMPLES,observationDataset} from './observation-examples.mjs?v=published1';
+import {OBSERVATION_EXAMPLES,observationDataset} from './observation-examples.mjs?v=published2';
 const $ = (id) => document.getElementById(id);
 const colabNativeMode=nativeKernelRequired;
 applyColabRuntimeUI(document,colabNativeMode);

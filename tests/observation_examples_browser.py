@@ -60,7 +60,7 @@ with sync_playwright() as pw:
     expect(page.locator('#geometry-contact')).to_be_checked()
     expect(page.locator('#dataset-name')).to_contain_text('V1128 Tauri')
     expect(page.locator('#number-period')).to_have_value('0.3053710')
-    expect(page.locator('#number-epoch')).to_have_value('2454842.3470000')
+    expect(page.locator('#number-epoch')).to_have_value('2454842.4996855')
     expect(page.locator('#number-mass_ratio')).to_have_value('0.53')
     expect(page.locator('#number-fillout_factor')).to_have_value('0.134')
     expect(page.locator('#export-button')).to_be_enabled(timeout=30000)
