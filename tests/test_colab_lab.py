@@ -150,7 +150,7 @@ def test_colab_reports_affinity_quota_and_bounded_process_workers(monkeypatch):
 def test_colab_source_archive_is_commit_pinned_and_notebook_matches_launcher():
     source=(ROOT/"notebooks"/"phoebe_lab_colab.py").read_text()
     notebook=(ROOT/"notebooks"/"PHOEBE_Semi_Detached_Binary_Colab.ipynb").read_text()
-    revision="269471ba2d2e29b645dfd1d8d84bbc8117aaece2"
+    revision="a88e6ede6f9e149610e21075fd9e92a13ef9c88d"
     assert f'SOURCE_REVISION = "{revision}"' in source
     assert f'SOURCE_REVISION = \\u0022{revision}\\u0022' in notebook or f'SOURCE_REVISION = \\\"{revision}\\\"' in notebook
     assert "archive/refs/heads/semi-detached.zip" not in source
