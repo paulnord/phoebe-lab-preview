@@ -2,6 +2,7 @@ import functools
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
+import logging
 from pathlib import Path
 import sys
 import threading
@@ -14,6 +15,9 @@ import nbformat
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("phoebe_lab_colab", ROOT / "notebooks" / "phoebe_lab_colab.py")
 launcher = importlib.util.module_from_spec(spec); spec.loader.exec_module(launcher)
+planck_spec=importlib.util.spec_from_file_location(
+    "phoebe_lab_native_planck_test",ROOT/"site"/"engine"/"native_planck.py")
+native_planck=importlib.util.module_from_spec(planck_spec);planck_spec.loader.exec_module(native_planck)
 
 
 def test_geometry_is_visible_first_class_model_choice():
@@ -87,6 +91,29 @@ def test_generated_notebook_exposes_full_lab_and_native_runtime():
     assert all(cell.metadata.get("colab")=={} for cell in code_cells)
     assert all(cell.source.startswith("#@title ") for cell in code_cells)
     assert "Runtime → Run all" in source
+    assert "low_temperature_planck" in source and "native_warning_summary" in source
+
+
+def test_native_planck_warning_scope_deduplicates_only_known_roundoff():
+    logger=logging.getLogger("UNIVERSE")
+    records=[]
+    class Recorder(logging.Handler):
+        def emit(self,record):records.append(record.getMessage())
+    handler=Recorder();logger.addHandler(handler);prior=logger.level;logger.setLevel(logging.WARNING)
+    expected=("target_volume of 0.13199045439651605 slightly over critical value, "
+              "likely due to numerics: setting to critical value of 0.13199045439651594")
+    try:
+        with native_planck.capture_critical_volume_roundoff() as summary:
+            for _ in range(660):logger.warning(expected)
+            logger.warning("A distinct PHOEBE warning must remain visible.")
+        assert summary.count==660
+        assert records==["A distinct PHOEBE warning must remain visible."]
+        assert native_planck.warning_summary(660)["count"]==660
+        inherited=native_planck._CriticalVolumeRoundoffFilter();logger.addFilter(inherited)
+        native_planck.reset_inherited_roundoff_filters()
+        assert inherited not in logger.filters
+    finally:
+        logger.removeHandler(handler);logger.setLevel(prior)
 
 
 def test_colab_launch_uses_supported_kernel_port_iframe(monkeypatch):
@@ -147,16 +174,31 @@ def test_colab_kernel_services_parallel_work_protocol_and_provenance():
     class FakeWorkers:
         processes=[]
         @staticmethod
-        def calculate(payloads,local,cancelled):return [local(payload) for payload in payloads]
+        def calculate(payloads,local,cancelled):return [local(payload) for payload in payloads],0,0
         @staticmethod
         def close():pass
     kernel=launcher.NativeKernel.__new__(launcher.NativeKernel)
-    kernel.model=FakeModel();kernel.supported_workers=2;kernel.phase_workers=FakeWorkers()
+    class FakePlanck:
+        count=0
+        @classmethod
+        def activation_count(cls):return cls.count
+        @staticmethod
+        def warning_summary(count):return {"count":count,"message":"summary"}
+        @staticmethod
+        def capture_critical_volume_roundoff():
+            class Scope:
+                count=0
+                def __enter__(self):return self
+                def __exit__(self,*args):pass
+            return Scope()
+    kernel.model=FakeModel();kernel.native_planck=FakePlanck()
+    kernel.supported_workers=2;kernel.phase_workers=FakeWorkers()
     kernel.lock=threading.Lock();kernel.jobs={};kernel.jobs_lock=threading.Lock()
     updates=list(kernel.stream("parallel","compute",{"workers":2}))
     assert [update["type"] for update in updates]==["partial","result"]
     assert updates[-1]["result"]["surface_workers"]==2
     assert updates[-1]["result"]["native_python"] is True
+    assert updates[-1]["result"]["native_planck_activations"]==0
 
 
 def test_colab_overlay_injects_native_transport_and_routes_requests():

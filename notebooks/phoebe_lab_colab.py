@@ -126,11 +126,22 @@ def supported_native_workers(capacity=None):
     return max(1,min(4,int(capacity["usable_cpu_equivalents"])))
 
 
+def _load_native_planck(model_path, module_name):
+    """Load and install the reviewed native-only passband integration."""
+    path=Path(model_path).with_name("native_planck.py")
+    spec=importlib.util.spec_from_file_location(module_name,path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    module.install_low_temperature_planck()
+    return module
+
+
 def _phase_worker_loop(model_path,tasks,results,slot):
     """Keep one independent native PHOEBE model warm for exact phase batches."""
     try:
         os.environ.update(PHOEBE_ENABLE_ONLINE_PASSBANDS="FALSE",PHOEBE_ENABLE_MPI="FALSE",
                           PHOEBE_MULTIPROC_NPROCS="0",OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1")
+        native_planck=_load_native_planck(model_path,f"phoebe_lab_native_planck_worker_{slot}")
+        native_planck.reset_inherited_roundoff_filters()
         spec=importlib.util.spec_from_file_location(f"phoebe_lab_phase_worker_{slot}",model_path)
         model=importlib.util.module_from_spec(spec);spec.loader.exec_module(model)
         results.put(("ready",slot,os.getpid()))
@@ -138,7 +149,12 @@ def _phase_worker_loop(model_path,tasks,results,slot):
             task=tasks.get()
             if task is None:return
             task_id,payload=task
-            try:results.put(("result",task_id,model.worker_flux(payload)))
+            try:
+                before=native_planck.activation_count()
+                with native_planck.capture_critical_volume_roundoff() as roundoff:
+                    value=model.worker_flux(payload)
+                results.put(("result",task_id,value,roundoff.count,
+                             native_planck.activation_count()-before))
             except BaseException as error:
                 results.put(("error",task_id,f"{type(error).__name__}: {error}",traceback.format_exc()))
     except BaseException as error:
@@ -171,14 +187,14 @@ class NativePhaseWorkers:
     def calculate(self,payloads,local_flux,cancelled):
         """Compute one wave, preserving generator order and stopping stale helpers."""
         helper_count=max(0,len(payloads)-1)
-        if helper_count<1:return [local_flux(payloads[0])]
+        if helper_count<1:return [local_flux(payloads[0])],0,0
         if len(self.processes)<helper_count:self._start(helper_count)
         task_ids=[]
         for payload in payloads[1:]:
             self.sequence+=1;task_ids.append(self.sequence);self.tasks.put((self.sequence,payload))
         local=local_flux(payloads[0])
         if cancelled.is_set():self.close();raise RuntimeError("Cancelled.")
-        pending=set(task_ids);answers={}
+        pending=set(task_ids);answers={};roundoff_count=0;planck_activations=0
         while pending:
             if cancelled.is_set():self.close();raise RuntimeError("Cancelled.")
             if any(not process.is_alive() for process in self.processes):
@@ -190,9 +206,11 @@ class NativePhaseWorkers:
                 self.pids.append(message[2]);continue
             if kind in ("startup_error","error"):
                 self.close();raise RuntimeError(f"Native PHOEBE phase worker failed: {message[2]}")
-            _,task_id,value=message
-            if task_id in pending:answers[task_id]=value;pending.remove(task_id)
-        return [local]+[answers[task_id] for task_id in task_ids]
+            _,task_id,value,warnings,activations=message
+            if task_id in pending:
+                answers[task_id]=value;pending.remove(task_id)
+                roundoff_count+=warnings;planck_activations+=activations
+        return [local]+[answers[task_id] for task_id in task_ids],roundoff_count,planck_activations
 
 
 class NativeKernel:
@@ -201,6 +219,7 @@ class NativeKernel:
         os.environ.update(PHOEBE_ENABLE_ONLINE_PASSBANDS="FALSE", PHOEBE_ENABLE_MPI="FALSE",
                           PHOEBE_MULTIPROC_NPROCS="0", OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
         path = Path(site) / "engine" / "model.py"
+        self.native_planck=_load_native_planck(path,"phoebe_lab_native_planck")
         spec = importlib.util.spec_from_file_location("phoebe_lab_native_model", path)
         self.model = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.model)
         self.model_path=path;self.capacity=detected_cpu_capacity()
@@ -223,6 +242,7 @@ class NativeKernel:
                 "cpu_capacity":self.capacity,"supported_workers":self.supported_workers,
                 "recommended_workers":self.supported_workers,
                 "worker_backend":"persistent-python-processes",
+                "low_temperature_planck":"native-colab-validated",
                 "worker_pids":[process.pid for process in self.phase_workers.processes if process.is_alive()]}
 
     def cancel(self, job_id):
@@ -236,27 +256,39 @@ class NativeKernel:
         with self.jobs_lock:self.jobs[job_id]=cancelled
         try:
             with self.lock:
-                if operation not in ("compute","fit"):raise ValueError("Unknown streamed native operation.")
-                workers=self._worker_count(payload)
-                steps=(self.model.progressive_fit if operation=="fit" else self.model.progressive_curve)(dict(payload,workers=workers))
-                response=None
-                while True:
-                    if cancelled.is_set():raise RuntimeError("Cancelled.")
-                    try:update=next(steps) if response is None else steps.send(response)
-                    except StopIteration:return
+                with self.native_planck.capture_critical_volume_roundoff() as roundoff:
+                    if operation not in ("compute","fit"):raise ValueError("Unknown streamed native operation.")
+                    workers=self._worker_count(payload);worker_warnings=0;worker_activations=0
+                    activation_start=self.native_planck.activation_count()
+                    steps=(self.model.progressive_fit if operation=="fit" else self.model.progressive_curve)(dict(payload,workers=workers))
                     response=None
-                    if update["type"]=="work":
-                        payloads=[{"parameters":update["parameters"],"quality":update["quality"],"indices":indices}
-                                  for indices in update["groups"]]
-                        response=self.phase_workers.calculate(payloads,self.model.worker_flux,cancelled)
-                        continue
-                    if update["type"]=="result":
-                        update["result"]["runtime"]="Colab native Python"
-                        update["result"]["native_python"]=True
-                        parameters=update["result"].get("parameters",{})
-                        surface=any(parameters.get(key) for key in ("contact","semidetached","distortion","irradiation"))
-                        update["result"]["surface_workers"]=workers if surface else 1
-                    yield update
+                    while True:
+                        if cancelled.is_set():raise RuntimeError("Cancelled.")
+                        try:update=next(steps) if response is None else steps.send(response)
+                        except StopIteration:return
+                        response=None
+                        if update["type"]=="work":
+                            payloads=[{"parameters":update["parameters"],"quality":update["quality"],"indices":indices}
+                                      for indices in update["groups"]]
+                            response,warnings,activations=self.phase_workers.calculate(
+                                payloads,self.model.worker_flux,cancelled)
+                            worker_warnings+=warnings;worker_activations+=activations
+                            continue
+                        if update["type"]=="result":
+                            update["result"]["runtime"]="Colab native Python"
+                            update["result"]["native_python"]=True
+                            parameters=update["result"].get("parameters",{})
+                            surface=any(parameters.get(key) for key in ("contact","semidetached","distortion","irradiation"))
+                            update["result"]["surface_workers"]=workers if surface else 1
+                            warning_count=roundoff.count+worker_warnings
+                            activation_count=(self.native_planck.activation_count()-activation_start+
+                                              worker_activations)
+                            update["result"]["native_planck_activations"]=activation_count
+                            if warning_count:
+                                summary=self.native_planck.warning_summary(warning_count)
+                                update["result"]["native_warning_summary"]=summary
+                                print("PHOEBE Lab:",summary["message"],flush=True)
+                        yield update
         finally:
             with self.jobs_lock:self.jobs.pop(job_id,None)
 
@@ -265,23 +297,32 @@ class NativeKernel:
         with self.jobs_lock:self.jobs[job_id]=cancelled
         try:
             with self.lock:
-                if cancelled.is_set(): raise RuntimeError("Cancelled.")
-                if operation == "surface":
-                    value=self.model.surface_mesh(payload)
-                    return {"value":value,"runtime":self.status()}
-                if operation == "fit":
-                    result=self.model.fit(dict(payload,workers=self._worker_count(payload)))
-                elif operation == "compute":
-                    result=None
-                    for update in self.model.progressive_curve(dict(payload,workers=self._worker_count(payload))):
-                        if cancelled.is_set(): raise RuntimeError("Cancelled.")
-                        if update["type"]=="work":raise RuntimeError("Non-streaming parallel compute is unavailable.")
-                        if update["type"] == "result":result=update["result"]
-                    if result is None:raise RuntimeError("Native PHOEBE did not return a complete curve.")
-                else:raise ValueError("Unknown native operation.")
-                result["runtime"]="Colab native Python"
-                result["native_python"]=True
-                return {"result":result,"runtime":self.status()}
+                with self.native_planck.capture_critical_volume_roundoff() as roundoff:
+                    if cancelled.is_set(): raise RuntimeError("Cancelled.")
+                    activation_start=self.native_planck.activation_count()
+                    if operation == "surface":
+                        value=self.model.surface_mesh(payload)
+                        answer={"value":value,"runtime":self.status()}
+                    else:
+                        if operation == "fit":
+                            result=self.model.fit(dict(payload,workers=self._worker_count(payload)))
+                        elif operation == "compute":
+                            result=None
+                            for update in self.model.progressive_curve(dict(payload,workers=self._worker_count(payload))):
+                                if cancelled.is_set(): raise RuntimeError("Cancelled.")
+                                if update["type"]=="work":raise RuntimeError("Non-streaming parallel compute is unavailable.")
+                                if update["type"] == "result":result=update["result"]
+                            if result is None:raise RuntimeError("Native PHOEBE did not return a complete curve.")
+                        else:raise ValueError("Unknown native operation.")
+                        result["runtime"]="Colab native Python";result["native_python"]=True
+                        result["native_planck_activations"]=(
+                            self.native_planck.activation_count()-activation_start)
+                        answer={"result":result,"runtime":self.status()}
+                    if roundoff.count:
+                        summary=self.native_planck.warning_summary(roundoff.count)
+                        answer["native_warning_summary"]=summary
+                        print("PHOEBE Lab:",summary["message"],flush=True)
+                    return answer
         finally:
             with self.jobs_lock:self.jobs.pop(job_id,None)
 

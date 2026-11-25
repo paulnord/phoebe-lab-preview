@@ -92,6 +92,15 @@ def main():
             assert page.locator("#window-button").is_disabled()
             assert "no longer provides a reliable" in page.locator("#window-button").get_attribute("title")
 
+            page.locator("#example-choice").select_option("observed-sz-her")
+            page.locator("#example-button").click()
+            page.locator("#dataset-name").get_by_text("SZ Herculis",exact=False).wait_for(timeout=10000)
+            assert page.locator("#geometry-semi").is_checked()
+            assert page.locator("#donor").input_value()=="secondary"
+            assert page.locator("#dataset-description").get_by_text("437 points",exact=False).is_visible()
+            page.locator("#engine-pill").get_by_text("Colab native engine ready").wait_for(timeout=15000)
+            assert any(operation=="compute" for _,operation in kernel.calls if operation!="cancel")
+
             def load_observations(name,period,epoch,count):
                 page.locator("#import-button").click()
                 page.locator("#data-file").set_input_files(str(ROOT/"site"/"examples"/name))
