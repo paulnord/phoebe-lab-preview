@@ -4,9 +4,11 @@ The browser calls these functions inside Pyodide. No HTTP/model server is used.
 """
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 from pathlib import Path
 import math
+import platform
 import sys
 import time
 from functools import lru_cache
@@ -53,6 +55,9 @@ def runtime_diagnostic():
         "phoebe": phoebe.__version__,
         **versions,
         "passband": "Johnson:V",
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "libc": " ".join(value for value in platform.libc_ver() if value) or "unavailable",
     }
     try:
         filename = Path(phoebe.list_installed_passbands(full_dict=True)["Johnson:V"]["fname"])
@@ -62,23 +67,93 @@ def runtime_diagnostic():
         )
     except (KeyError, OSError, TypeError):
         diagnostic.update(passband_bytes=None, passband_sha256="unavailable")
+    for module_name in ("libphoebe", "phoebe.algorithms.ceclipse"):
+        key = module_name.rsplit(".", 1)[-1] + "_sha256"
+        try:
+            origin = Path(importlib.util.find_spec(module_name).origin)
+            diagnostic[key] = hashlib.sha256(origin.read_bytes()).hexdigest()
+        except (AttributeError, ImportError, OSError, TypeError):
+            diagnostic[key] = "unavailable"
     return diagnostic
 
 
-def _invalid_curve_diagnostic(phases, flux):
+def _compute_option_diagnostic(bundle):
+    def value(qualifier, **kwargs):
+        try:
+            answer = bundle.get_value(qualifier, **kwargs)
+            return answer.tolist() if hasattr(answer, "tolist") else answer
+        except Exception as error:
+            return f"unavailable:{type(error).__name__}"
+    return {
+        "atm_primary": value("atm", component="primary", context="compute"),
+        "atm_secondary": value("atm", component="secondary", context="compute"),
+        "ld_primary": value("ld_mode", component="primary", dataset="observed_lc", context="dataset"),
+        "ld_secondary": value("ld_mode", component="secondary", dataset="observed_lc", context="dataset"),
+        "irrad_method": value("irrad_method", context="compute"),
+        "eclipse_method": value("eclipse_method", context="compute"),
+        "mesh_primary": value("mesh_method", component="primary", context="compute"),
+        "mesh_secondary": value("mesh_method", component="secondary", context="compute"),
+        "distortion_primary": value("distortion_method", component="primary", context="compute"),
+        "distortion_secondary": value("distortion_method", component="secondary", context="compute"),
+        "triangles_primary": value("ntriangles", component="primary", context="compute"),
+        "triangles_secondary": value("ntriangles", component="secondary", context="compute"),
+    }
+
+
+def _flux_diagnostic(phases, flux):
     expected = np.asarray(phases, dtype=float)
     actual = np.asarray(flux, dtype=float)
     bad = np.flatnonzero(~np.isfinite(actual) | (actual <= 0)) if actual.ndim == 1 else np.array([], dtype=int)
     bad_phases = expected[bad[:8]].tolist() if actual.shape == expected.shape else []
     finite = actual[np.isfinite(actual)]
+    return {
+        "samples": f"{actual.size}/{expected.size}", "invalid": int(len(bad)),
+        "invalid_phases": bad_phases,
+        "finite_min": float(np.min(finite)) if finite.size else None,
+        "finite_max": float(np.max(finite)) if finite.size else None,
+    }
+
+
+def _diagnostic_blackbody_probe(bundle, phases):
+    """Test atmosphere interpolation after failure without changing the result bundle."""
+    try:
+        probe = bundle.copy()
+        probe.set_value_all("atm", value="blackbody")
+        probe.set_value_all("ld_mode", dataset="observed_lc", value="manual")
+        probe.set_value_all("ld_func", dataset="observed_lc", value="linear")
+        probe.set_value_all("ld_coeffs", dataset="observed_lc", value=[0.0])
+        probe.run_compute(model="diagnostic_blackbody", overwrite=True, progressbar=False)
+        flux = np.asarray(probe.get_value(
+            "fluxes", dataset="observed_lc", model="diagnostic_blackbody"), dtype=float)
+        return {"settings": "blackbody/manual-linear", **_flux_diagnostic(phases, flux)}
+    except Exception as error:
+        return {"settings": "blackbody/manual-linear", "error": f"{type(error).__name__}: {str(error)[:300]}"}
+
+
+def _invalid_curve_diagnostic(phases, flux, *, bundle=None, parameters_used=None, quality=None):
+    curve = _flux_diagnostic(phases, flux)
     runtime = runtime_diagnostic()
+    options = _compute_option_diagnostic(bundle) if bundle is not None else None
+    probe = _diagnostic_blackbody_probe(bundle, phases) if bundle is not None else None
+    payload = None if parameters_used is None else {
+        key: parameters_used[key] for key in (
+            "contact", "semidetached", "donor", "inclination", "radius_primary",
+            "radius_secondary", "fillout_factor", "temperature_ratio", "mass_ratio",
+            "eccentricity", "omega", "period", "distortion", "irradiation")
+    }
+    finite_range = (f"{curve['finite_min']}..{curve['finite_max']}"
+                    if curve["finite_min"] is not None else "none..none")
     return (
-        f"samples={actual.size}/{expected.size}; invalid={len(bad)}; "
-        f"invalid phases={bad_phases}; finite range="
-        f"{float(np.min(finite)) if finite.size else 'none'}..{float(np.max(finite)) if finite.size else 'none'}; "
+        f"samples={curve['samples']}; invalid={curve['invalid']}; "
+        f"invalid phases={curve['invalid_phases']}; finite range={finite_range}; "
         f"Python {runtime['python']}; PHOEBE {runtime['phoebe']}; NumPy {runtime['numpy']}; "
         f"SciPy {runtime['scipy']}; Astropy {runtime['astropy']}; Matplotlib {runtime['matplotlib']}; "
-        f"Johnson:V {runtime['passband_sha256']} ({runtime['passband_bytes']} bytes)"
+        f"Johnson:V {runtime['passband_sha256']} ({runtime['passband_bytes']} bytes); "
+        f"platform={runtime['platform']}; machine={runtime['machine']}; libc={runtime['libc']}; "
+        f"libphoebe={runtime['libphoebe_sha256']}; ceclipse={runtime['ceclipse_sha256']}; "
+        f"quality={quality}; payload={json.dumps(payload, sort_keys=True)}; "
+        f"compute_options={json.dumps(options, sort_keys=True)}; "
+        f"diagnostic_probe={json.dumps(probe, sort_keys=True)}"
     )
 
 
@@ -237,7 +312,8 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None, _retry_invalid=T
         return _physical_flux(p, quality, phases=phases, ntriangles=ntriangles, _retry_invalid=False)
     if invalid:
         mode = "contact" if p["contact"] else (f"semi-detached {p['donor']}-donor" if p["semidetached"] else "detached")
-        detail = _invalid_curve_diagnostic(phases, flux)
+        detail = _invalid_curve_diagnostic(
+            phases, flux, bundle=b, parameters_used=p, quality=quality)
         raise ValueError(
             f"PHOEBE could not produce a finite, positive {mode} light curve after rebuilding the cached model. "
             f"Reset the parameters to a supported configuration and retry. Runtime diagnostic: {detail}"

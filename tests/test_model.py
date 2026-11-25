@@ -69,12 +69,48 @@ class ObservationTests(unittest.TestCase):
             "python":"3.12.0","phoebe":"2.5.4","numpy":"2.0.2","scipy":"1.15.3",
             "astropy":"7.1.0","matplotlib":"3.11.2","passband":"Johnson:V",
             "passband_sha256":"abc123","passband_bytes":14719680,
+            "platform":"Linux-test","machine":"x86_64","libc":"glibc 2.35",
+            "libphoebe_sha256":"lib123","ceclipse_sha256":"eclipse123",
         }):
             message=model._invalid_curve_diagnostic(phases,np.array([1.,np.nan,0.,.8,1.]))
         self.assertIn("invalid=2",message)
         self.assertIn("invalid phases=[-0.25, 0.0]",message)
         self.assertIn("PHOEBE 2.5.4",message)
         self.assertIn("Johnson:V abc123 (14719680 bytes)",message)
+        self.assertIn("libphoebe=lib123",message)
+
+    def test_blackbody_probe_is_finite_without_mutating_authoritative_bundle(self):
+        phases=np.linspace(-.5,.5,5)
+        p=dict(model.DEFAULTS,semidetached=True,donor="secondary",inclination=87.566,
+               radius_primary=.318,temperature_ratio=4881/7262,mass_ratio=.4715,
+               period=.8180837,epoch=2454588.167997,irradiation=False)
+        old=dict(model._semi_bundles)
+        model._semi_bundles.clear()
+        try:
+            _,flux=model._physical_flux(p,"preview",phases=phases)
+            bundle=model._semi_bundles["secondary"]
+            before=model._compute_option_diagnostic(bundle)
+            probe=model._diagnostic_blackbody_probe(bundle,phases)
+            after=model._compute_option_diagnostic(bundle)
+            self.assertEqual(probe["settings"],"blackbody/manual-linear")
+            self.assertEqual(probe["invalid"],0)
+            self.assertEqual(probe["samples"],"5/5")
+            self.assertTrue(np.all(np.isfinite(flux) & (flux>0)))
+            self.assertEqual(before,after)
+            self.assertEqual(before["atm_primary"],"ck2004")
+            self.assertEqual(before["ld_primary"],"interp")
+            self.assertEqual(before["irrad_method"],"none")
+            self.assertEqual(before["triangles_primary"],800)
+            message=model._invalid_curve_diagnostic(
+                phases,np.full(5,np.nan),bundle=bundle,parameters_used=p,quality="preview")
+            self.assertIn('"semidetached": true',message)
+            self.assertIn('"donor": "secondary"',message)
+            self.assertIn('"irradiation": false',message)
+            self.assertIn('"irrad_method": "none"',message)
+            self.assertIn('"atm_primary": "ck2004"',message)
+            self.assertIn('"invalid": 0',message)  # diagnostic blackbody probe only
+        finally:
+            model._semi_bundles.clear();model._semi_bundles.update(old)
 
 if __name__ == "__main__":
     unittest.main()
