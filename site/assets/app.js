@@ -34,7 +34,7 @@ const state = {parameters:{...DEFAULTS},quality:'preview',dataset:null,result:nu
 let computeTimer,engineRestartTimer,toastTimer,parsedFile,exampleRequest=0;
 const parameterInputs = new Map();
 let predictEccentricSweep = null, eccentricSweepSpec = null;
-let predictNear = null, nearRocheReference = null, predictBroad = null, predictTemperature = null, predictSurface = null, predictRegional = null, predictDisplay = null, predictContact = null, predictSemi = null, dragView = null, pointerHeld = false;
+let predictNear = null, nearRocheReference = null, predictBroad = null, predictTemperature = null, predictSurface = null, predictRegional = null, predictDisplay = null, predictContact = null, predictSemi = null, predictLiteratureLocal = null, dragView = null, pointerHeld = false;
 const modeOf=p=>p.contact?'contact':p.semidetached?'semi':'detached';
 const modeSnapshots={detached:{...DEFAULTS},semi:null,contact:null};
 let timingRevision=-1, liveTiming=null;
@@ -165,13 +165,13 @@ function approximateView() {
   const p=state.parameters;
   if(unphysicalReason(p))return null;
   if(p.contact){
-    if(!state.dataset || !predictContact)return null;
-    const curve=predictContact({...p,epoch:0});
+    if(!state.dataset)return null;
+    const curve=predictLiteratureLocal?.({...p,epoch:0}) ?? predictContact?.({...p,epoch:0});
     return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),omitted:[]} : null;
   }
   if(p.semidetached){
-    if(!state.dataset || !predictSemi)return null;
-    const curve=predictSemi({...p,epoch:0});
+    if(!state.dataset)return null;
+    const curve=predictLiteratureLocal?.({...p,epoch:0}) ?? predictSemi?.({...p,epoch:0});
     return curve ? {...curve,...compareDisplayCurve(curve,normalizedData()),omitted:[]} : null;
   }
   const omitted=[p.distortion && 'tides',p.irradiation && 'heating'].filter(Boolean);
@@ -1229,6 +1229,11 @@ fetch(new URL('../experiment/near-roche-reference.json?v=658bddb7c8e01386',impor
   .then(response=>{if(!response.ok)throw Error(response.status);return response.json();})
   .then(reference=>{nearRocheReference=reference;refreshPreview();})
   .catch(error=>console.warn('Near-lobe reference unavailable',error));
+Promise.all([
+  import('../experiment/literature-local-predict.mjs?v=local1'),
+  fetch(new URL('../experiment/literature-local-model.json?v=local1',import.meta.url)).then(response=>{if(!response.ok)throw Error(response.status);return response.json();}),
+]).then(([module,spec])=>{predictLiteratureLocal=module.makeLiteratureLocalPredictor(spec);refreshPreview();})
+  .catch(error=>console.warn('Published-system neighborhood preview unavailable',error));
 Promise.all([
   import('../experiment/contact-predict.mjs?v=confidence1'),
   fetch(new URL('../experiment/contact-model.json',import.meta.url)).then(response=>{
