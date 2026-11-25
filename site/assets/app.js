@@ -7,6 +7,7 @@ import {requestMatches} from './request-guard.mjs?v=geometry1';
 import {createScientificEngine,nativeKernelConfig,nativeKernelRequired} from './engine-client.mjs?v=colab-native2';
 import {applyColabRuntimeUI,applyColabWorkerStatus,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-capacity1';
 import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
+import {OBSERVATION_EXAMPLES,observationDataset} from './observation-examples.mjs?v=published1';
 const $ = (id) => document.getElementById(id);
 const colabNativeMode=nativeKernelRequired;
 applyColabRuntimeUI(document,colabNativeMode);
@@ -460,7 +461,7 @@ function updateControlValues() {
     : semi
     ? `Semi-detached fits keep the ${state.parameters.donor} donor on its native Roche constraint and can move inclination, the free-star radius, temperature ratio, mass ratio or period. The final curve is recomputed natively at 513 phases.`
     : 'Choose detached model parameters and a phase budget for each trial. Every observation contributes; the final curve, residuals and CSV are recomputed natively at 513 phases.';
-  $('example-button').disabled=mode!=='detached' || state.fitting;
+  $('example-button').disabled=state.fitting;
   drawStarGuide(state.parameters);
 }
 
@@ -583,7 +584,7 @@ function setBusy(busy,fitting=false) {
   $('tidal-phases').disabled=fitting;
   $('surface-workers').disabled=fitting||(colabNativeMode&&Number($('surface-workers').dataset.supportedWorkers||1)<=1);Object.keys(zoomOptions).forEach(key=>{$(key+'-span').disabled=fitting;});
   $('example-choice').disabled=fitting;
-  $('import-button').disabled=fitting;$('example-button').disabled=fitting || modeOf(state.parameters)!=='detached';$('reset-button').disabled=fitting;
+  $('import-button').disabled=fitting;$('example-button').disabled=fitting;$('reset-button').disabled=fitting;
   for(const {number,range} of parameterInputs.values()) {number.disabled=fitting;if(range)range.disabled=fitting;}
   for(const radio of document.querySelectorAll('input[name="geometry"]'))radio.disabled=fitting;
   $('donor').disabled=fitting;$('distortion').disabled=fitting || modeOf(state.parameters)!=='detached';$('irradiation').disabled=fitting;
@@ -1027,14 +1028,15 @@ function prepareImport(parsed,name) {
 
 function download(name,text,type='application/json') {const url=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function loadExample(notify=true) {
-  if(modeOf(state.parameters)!=='detached')return;
   const id=++exampleRequest,choice=$('example-choice').value;
   try{
-    const response=await fetch(new URL('../'+choice,import.meta.url));
+    const observed=OBSERVATION_EXAMPLES[choice];
+    const response=await fetch(new URL('../'+(observed?.path||choice),import.meta.url));
     if(!response.ok)throw Error('The example could not be loaded.');
-    const data=await response.json();
-    if(id!==exampleRequest || choice!==$('example-choice').value || state.fitting || modeOf(state.parameters)!=='detached')return;
-    installDataset(data,choice==='example.json'?DEFAULTS:(data.truth||data.starting_parameters));
+    const data=observed?observationDataset(observed,parseText(await response.text())):await response.json();
+    if(id!==exampleRequest || choice!==$('example-choice').value || state.fitting)return;
+    const parameters=observed?observed.parameters:choice==='example.json'?DEFAULTS:(data.truth||data.starting_parameters);
+    installDataset(data,parameters);
     if(notify)toast('Loaded '+data.name+'.');
   }catch(e){if(id===exampleRequest)toast(cleanError(e));}
 }
@@ -1092,7 +1094,7 @@ function bindEvents() {
   };
   $('engine-retry').onclick=startEngine;
   $('reset-button').onclick=()=>{const mode=modeOf(state.parameters);state.parameters=mode==='contact'?{...DEFAULTS,contact:true,fillout_factor:.25}:mode==='semi'?{...DEFAULTS,semidetached:true,donor:state.parameters.donor,radius_secondary:state.parameters.donor==='primary' ? .195 : .17,radius_primary:state.parameters.donor==='secondary' ? .222 : .21}:{...DEFAULTS};modeSnapshots[mode]={...state.parameters};Object.keys(zoomOptions).forEach(centerSlider);updateControlValues();parametersChanged();};
-  $('example-button').onclick=()=>{if(modeOf(state.parameters)==='detached')loadExample();};
+  $('example-button').onclick=()=>loadExample();
   for(const button of document.querySelectorAll('.quality'))button.onclick=()=>{state.quality=button.dataset.quality;document.querySelectorAll('.quality').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});parametersChanged();scheduleCompute(50);};
   $('save-button').onclick=()=>{if(!state.dataset){toast('Load observations first.');return;}download('phoebe-lab-session.json',JSON.stringify({schema:'phoebe-lab-session-v1',parameters:state.parameters,dataset:state.dataset,quality:state.quality,tidal_phases:Number($('tidal-phases').value)},null,2));};
   $('export-button').onclick=()=>{
@@ -1294,6 +1296,7 @@ renderControls();bindEvents();drawPlots();
 const exampleSlug=new URLSearchParams(location.search).get('example');
 const picker=$('example-choice');
 const linked=Array.from(picker.options).find(option=>option.value==='examples/'+exampleSlug+'.json');
-if(linked)picker.value=linked.value;
+const linkedObserved=Array.from(picker.options).find(option=>option.value==='observed-'+exampleSlug);
+if(linked||linkedObserved)picker.value=(linked||linkedObserved).value;
 await loadExample(false);
 startEngine();

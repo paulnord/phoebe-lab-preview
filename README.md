@@ -123,6 +123,15 @@ semi-amplitudes stay at 18.6 and 39.5 km/s.
 Each synthetic dataset in this group has 240 sampled phases with seeded Gaussian measurement noise.
 Regenerate the 30° example with native PHOEBE using `python tools/generate_non_eclipsing.py`.
 
+The same picker also includes two published Johnson V datasets. **SZ Her**
+selects Semi-detached with the secondary donor and the observing-run ephemeris;
+**V1128 Tau** selects Contact and uses its spectroscopic mass ratio of 0.534 as
+starting guidance. These entries contain the original timestamps and
+differential magnitudes without invented point uncertainties. Loading starts a
+native forward calculation, never an automatic fit. See
+[`site/examples/OBSERVATIONS.md`](site/examples/OBSERVATIONS.md) for provenance,
+starting values and model limitations.
+
 **Kepler · KIC 4544587** contains 432 measured long-cadence points with catalog
 phases, detrended fluxes and their reported uncertainties. The initial geometry
 uses published parameters rounded to slider steps. The main lab uses Johnson V

@@ -13,16 +13,20 @@ def rows(name):
 
 def test_published_observation_csvs_are_app_compatible_and_unmodified():
     contact=rows("observed-gsc3822-1056-johnson-v.csv")
+    in_range_contact=rows("observed-v1128-tau-johnson-v.csv")
     semi=rows("observed-sz-her-johnson-v.csv")
     assert contact[0]==["hjd","johnson_v_magnitude"] and len(contact)==272
+    assert in_range_contact[0]==["hjd","differential_johnson_v_magnitude"] and len(in_range_contact)==691
     assert semi[0]==["hjd","differential_johnson_v_magnitude"] and len(semi)==438
-    for table in (contact,semi):
+    for table in (contact,in_range_contact,semi):
         values=[[float(cell) for cell in row] for row in table[1:]]
         assert all(len(row)==2 and all(math.isfinite(value) for value in row) for row in values)
         assert all(row[0]>2 for row in values)  # the UI's automatic time-axis test
         assert "mag" in table[0][1]             # the UI's automatic magnitude test
     assert contact[1]==["2450495.49280","12.371"]
     assert contact[-1]==["2450500.78560","12.440"]
+    assert in_range_contact[1]==["2454842.3500","0.313"]
+    assert in_range_contact[-1]==["2454842.3493","0.306"]
     assert semi[1]==["2454525.24769","0.183"]
     assert semi[-1]==["2454604.28266","0.060"]
 
@@ -30,6 +34,7 @@ def test_published_observation_csvs_are_app_compatible_and_unmodified():
 def test_published_ephemerides_cover_both_orbits_without_phase_columns():
     for name,epoch,period in [
         ("observed-gsc3822-1056-johnson-v.csv",2450495.5212,0.30989069),
+        ("observed-v1128-tau-johnson-v.csv",2454842.3470,0.305371),
         ("observed-sz-her-johnson-v.csv",2454588.167997,0.8180837),
     ]:
         table=rows(name)
