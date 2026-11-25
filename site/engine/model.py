@@ -104,7 +104,18 @@ def observations(dataset, p, *, sort=True):
     return phase[order], flux[order], None if sigma is None else sigma[order]
 
 
-def _physical_flux(p, quality, *, phases=None, ntriangles=None):
+def _reset_curve_bundle(p):
+    """Discard one cached PHOEBE curve bundle without touching other geometries."""
+    global _bundle, _contact_bundle, _semi_bundles
+    if p["contact"]:
+        _contact_bundle = None
+    elif p["semidetached"]:
+        _semi_bundles.pop(p["donor"], None)
+    else:
+        _bundle = None
+
+
+def _physical_flux(p, quality, *, phases=None, ntriangles=None, _retry_invalid=True):
     global _bundle, _contact_bundle, _semi_bundles
     if p["contact"] and _contact_bundle is None:
         _stage("Building the native contact-envelope system…")
@@ -171,8 +182,17 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None):
         raise ValueError(message[:650]) from error
     flux = np.asarray(b.get_value("fluxes", dataset="observed_lc", model="ui_model"), dtype=float)
     _stage("Comparing the model with observations…")
-    if not np.isfinite(flux).all() or np.any(flux <= 0):
-        raise ValueError("The current geometry did not produce a finite, positive light curve.")
+    invalid = flux.shape != np.asarray(phases).shape or not np.isfinite(flux).all() or np.any(flux <= 0)
+    if invalid and _retry_invalid:
+        # PHOEBE bundles are deliberately reused for interactive speed. If its
+        # cached model state ever returns invalid samples, retry the identical
+        # physical request once with a fresh bundle before blaming geometry.
+        _stage("Rebuilding the cached PHOEBE model after an invalid light curve…")
+        _reset_curve_bundle(p)
+        return _physical_flux(p, quality, phases=phases, ntriangles=ntriangles, _retry_invalid=False)
+    if invalid:
+        mode = "contact" if p["contact"] else (f"semi-detached {p['donor']}-donor" if p["semidetached"] else "detached")
+        raise ValueError(f"PHOEBE could not produce a finite, positive {mode} light curve after rebuilding the cached model. Reset the parameters to a supported configuration and retry.")
     return phases, flux
 
 

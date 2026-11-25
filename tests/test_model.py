@@ -8,6 +8,7 @@ os.environ.update(PHOEBE_ENABLE_PLOTTING="FALSE", PHOEBE_ENABLE_ONLINE_PASSBANDS
                   PHOEBE_MULTIPROC_NPROCS="0", PHOEBE_ENABLE_MPI="FALSE")
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "site/engine"))
@@ -36,6 +37,31 @@ class ObservationTests(unittest.TestCase):
             model.observations(dict(x=list(range(8)), y=[1]*8, sigma=[0]*8), model.DEFAULTS)
         with self.assertRaises(ValueError):
             model.parameters(dict(distortion="false"))
+
+    def test_invalid_cached_semi_curve_rebuilds_once(self):
+        class FakeBundle:
+            def __init__(self, flux):self.flux=np.asarray(flux,dtype=float)
+            def flip_constraint(self,*args,**kwargs):pass
+            def add_dataset(self,*args,**kwargs):pass
+            def set_value(self,*args,**kwargs):pass
+            def set_value_all(self,*args,**kwargs):pass
+            def run_compute(self,*args,**kwargs):pass
+            def get_value(self,name,*args,**kwargs):
+                return 1.0 if name=="sma" else self.flux
+        phases=np.linspace(-.5,.5,5)
+        bundles=[FakeBundle([1.,np.nan,1.,1.,1.]),FakeBundle([1.,.8,.7,.8,1.])]
+        old=dict(model._semi_bundles)
+        model._semi_bundles.clear()
+        try:
+            with patch.object(model.phoebe,"default_binary",side_effect=bundles) as build:
+                actual_phases,flux=model._physical_flux(
+                    dict(model.DEFAULTS,semidetached=True,donor="secondary",radius_primary=.318),
+                    "preview",phases=phases)
+            np.testing.assert_array_equal(actual_phases,phases)
+            np.testing.assert_array_equal(flux,bundles[1].flux)
+            self.assertEqual(build.call_count,2)
+        finally:
+            model._semi_bundles.clear();model._semi_bundles.update(old)
 
 if __name__ == "__main__":
     unittest.main()
