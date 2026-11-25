@@ -52,6 +52,7 @@ def main():
                                       "native_python":answer.get("result",{}).get("native_python"),
                                       "updates":[update["type"] for update in answer.get("updates",[])],
                                       "partial_phases":[len(update["phases"]) for update in answer.get("updates",[]) if update["type"]=="partial"],
+                                      "surface_workers":answer.get("result",{}).get("surface_workers"),
                                       "surface_geometry":answer.get("value",{}).get("geometry"),
                                       "has_neck":answer.get("value",{}).get("neck") is not None})
             return answer
@@ -71,12 +72,15 @@ def main():
             ("semi-secondary",{**DEFAULTS,"semidetached":True,"donor":"secondary","radius_primary":.222}),
             ("contact",{**DEFAULTS,"contact":True,"fillout_factor":.25}),
         ]
+        native_workers=min(2,report["status"]["supported_workers"])
         for name,parameters in geometries:
             surface=run(name+"-surface","surface",{"parameters":parameters,"triangles":300})
             assert surface["value"]["geometry"] in ("semi","contact")
             if name=="contact":assert surface["value"]["neck"] is not None
-            model=run(name+"-129","compute",{**base_payload,"parameters":parameters,"plot_phases":129})
+            model=run(name+"-129","compute",{**base_payload,"parameters":parameters,
+                      "plot_phases":129,"workers":native_workers})
             assert len(model["result"]["phases"])==129 and model["result"]["native_python"]
+            assert model["result"]["surface_workers"]==native_workers
         print(json.dumps(report,indent=2))
     finally: launcher.stop_lab()
 

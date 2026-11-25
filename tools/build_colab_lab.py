@@ -44,9 +44,10 @@ lab_server = show_lab(height=1050)
 
 - **Colab:** supported on the free CPU runtime. Exact curves, bounded fits, residual/export results, and native orbit meshes run in the notebook's native Python process. The top status pill and result provenance say `Colab native`.
 - Native Colab curves arrive in genuine PHOEBE phase batches, so the plot fills in progressively before the authoritative final normalization/statistics/export result.
+- **Native phase workers:** the notebook reports affinity and CPU quota separately, then offers only the worker counts its persistent native-Python phase pool supports (up to four). The maximum truthful supported count is selected by default, with every lower count still available. This parallelizes exact surface phase batches and the final fitted curve; bounded fit trials remain serial and deterministic.
 - **Local Jupyter/classic:** supported when the browser and kernel share the same computer. Run the notebook from a repository checkout to use its local `site/` files.
 - **Remote JupyterLab:** direct loopback iframes may be blocked by the deployment. Use Colab or the standalone page unless that server provides a loopback proxy.
-- **Standalone preview:** uses PHOEBE WebAssembly in its browser worker, independently of this notebook's native bridge.
+- **Standalone preview:** uses PHOEBE WebAssembly in independent browser Web Workers, not MPI, and remains independent of this notebook's native bridge. Browser Web Workers already parallelize eligible exact phase batches without a hosted solver.
 - **Fullscreen:** the workbench asks the browser for fullscreen. Colab's supported kernel-port iframe may deny that browser permission; if so, the interface reports the limitation without changing compute backends.
 - **Full window:** Colab's direct kernel-port window helper is deprecated because browser security changes can break it, so this notebook does not advertise an unreliable app-only popup. The inline workbench remains connected to this kernel.
 - Use `PHOEBE_Semi_Detached_Validation.ipynb` for training reproducibility and this notebook for interactive fitting.

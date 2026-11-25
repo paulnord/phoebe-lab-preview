@@ -8,13 +8,14 @@ export function applyColabWorkerStatus(doc,info){
   const supported=Math.max(1,Math.floor(Number(info?.supported_workers)||1));
   workers.dataset.supportedWorkers=String(supported);workers.replaceChildren();
   for(let value=1;value<=supported;value++){const option=doc.createElement('option');option.value=option.textContent=String(value);workers.append(option);}
-  workers.value='1';workers.hidden=supported===1;workers.disabled=supported===1;
+  const recommended=Math.max(1,Math.min(supported,Math.floor(Number(info?.recommended_workers)||1)));
+  workers.value=String(recommended);workers.hidden=supported===1;workers.disabled=supported===1;
   const workerValue=doc.getElementById('surface-workers-value');workerValue.hidden=supported>1;
   workerValue.textContent=supported===1?'1 native worker':`${supported} native workers available`;
   const capacity=info?.cpu_capacity||{},usable=Number(capacity.usable_cpu_equivalents),affinity=Number(capacity.affinity_cpus),quota=capacity.cgroup_quota_cpus;
   const detected=Number.isFinite(usable)?`${usable} usable CPU equivalent${usable===1?'':'s'} detected`:'runtime CPU capacity unavailable';
   const limit=Number.isFinite(affinity)?` (${affinity} affinity CPU${affinity===1?'':'s'}${quota==null?'':`, ${quota} quota`})`:'';
-  workerRow.querySelector('small').textContent=`${detected}${limit}. Native phase streaming currently supports ${supported} worker${supported===1?'':'s'}.`;
+  workerRow.querySelector('small').textContent=`${detected}${limit}. Native phase streaming supports ${supported} worker${supported===1?'':'s'}; the fit search itself remains serial, then its final exact curve uses this selection.`;
 }
 
 export function applyColabRuntimeUI(doc,config){
@@ -31,7 +32,7 @@ export function applyColabRuntimeUI(doc,config){
   windowButton.disabled=true;windowButton.title='Colab no longer provides a reliable app-only kernel-port window. Fullscreen remains available when the host grants iframe permission.';
   const workers=doc.getElementById('surface-workers'),workerRow=workers.closest('label');
   workers.value='1';workers.dataset.supportedWorkers='1';workers.disabled=true;workers.hidden=true;
-  workerRow.querySelector('strong').textContent='Native compute worker';
+  workerRow.querySelector('strong').textContent='Native phase workers';
   workerRow.querySelector('small').textContent='Detecting runtime CPU capacity; native phase streaming currently supports one worker.';
   const workerValue=doc.createElement('span');workerValue.id='surface-workers-value';workerValue.className='mono';workerValue.textContent='1 native worker';workerRow.append(workerValue);
   doc.getElementById('data-file').accept='.csv,.tsv,.txt,.dat,.json';

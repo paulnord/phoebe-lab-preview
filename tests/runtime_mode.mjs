@@ -37,6 +37,10 @@ assert.equal(workers.hidden,true);assert.equal(workers.disabled,true);
 applyColabWorkerStatus(doc,{cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:2.5,usable_cpu_equivalents:2.5},supported_workers:1});
 assert.equal(workers.dataset.supportedWorkers,'1');assert.equal(workers.children.length,1);
 assert.match(workerSmall.textContent,/2.5 usable CPU equivalents detected/);assert.match(workerSmall.textContent,/supports 1 worker/);
+applyColabWorkerStatus(doc,{cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:4,usable_cpu_equivalents:4},supported_workers:4,recommended_workers:4});
+assert.equal(workers.dataset.supportedWorkers,'4');assert.equal(workers.children.length,4);
+assert.equal(workers.value,'4');assert.equal(workers.hidden,false);assert.equal(workers.disabled,false);
+assert.match(workerSmall.textContent,/fit search itself remains serial/);
 
 const untouched={getElementById:()=>{throw Error('standalone DOM must remain untouched');}};
 assert.equal(applyColabRuntimeUI(untouched,null),false);

@@ -105,15 +105,48 @@ def test_colab_launch_uses_supported_kernel_port_iframe(monkeypatch):
     assert calls==[(43210,777)]
 
 
-def test_colab_reports_affinity_quota_separately_from_supported_workers(monkeypatch):
+def test_colab_reports_affinity_quota_and_bounded_process_workers(monkeypatch):
     monkeypatch.setattr(launcher.os,"sched_getaffinity",lambda pid:set(range(6)))
     monkeypatch.setattr(launcher,"_cgroup_cpu_quota",lambda:2.5)
     assert launcher.detected_cpu_capacity()=={
         "affinity_cpus":6,"cgroup_quota_cpus":2.5,"usable_cpu_equivalents":2.5}
+    assert launcher.supported_native_workers()==2
+    monkeypatch.setattr(launcher,"detected_cpu_capacity",lambda:{
+        "affinity_cpus":16,"cgroup_quota_cpus":None,"usable_cpu_equivalents":16.})
+    assert launcher.supported_native_workers()==4
     source=(ROOT/"notebooks"/"phoebe_lab_colab.py").read_text()
-    assert '"supported_workers":1' in source
-    assert "requested unexpected parallel work" in source
-    assert "dict(payload,workers=1)" in source
+    assert '"worker_backend":"persistent-python-processes"' in source
+    assert "NativePhaseWorkers" in source and "multiprocessing.get_context(\"fork\")" in source
+    assert "PHOEBE_ENABLE_MPI=\"FALSE\"" in source
+
+
+def test_colab_kernel_services_parallel_work_protocol_and_provenance():
+    class FakeModel:
+        phoebe=types.SimpleNamespace(__version__="2.5.4")
+        @staticmethod
+        def worker_flux(payload):return [float(i) for i in payload["indices"]]
+        @staticmethod
+        def progressive_curve(payload):
+            assert payload["workers"]==2
+            yield {"type":"partial","phases":[-.5,.5],"model":[1.,1.],"target":2}
+            answer=yield {"type":"work","groups":[(0,2),(1,3)],"parameters":{
+                "contact":True},"quality":"preview"}
+            assert answer==[[0.,2.],[1.,3.]]
+            yield {"type":"result","result":{"parameters":{"contact":True},
+                   "phases":[-.5,.5],"model":[1.,1.]}}
+    class FakeWorkers:
+        processes=[]
+        @staticmethod
+        def calculate(payloads,local,cancelled):return [local(payload) for payload in payloads]
+        @staticmethod
+        def close():pass
+    kernel=launcher.NativeKernel.__new__(launcher.NativeKernel)
+    kernel.model=FakeModel();kernel.supported_workers=2;kernel.phase_workers=FakeWorkers()
+    kernel.lock=threading.Lock();kernel.jobs={};kernel.jobs_lock=threading.Lock()
+    updates=list(kernel.stream("parallel","compute",{"workers":2}))
+    assert [update["type"] for update in updates]==["partial","result"]
+    assert updates[-1]["result"]["surface_workers"]==2
+    assert updates[-1]["result"]["native_python"] is True
 
 
 def test_colab_overlay_injects_native_transport_and_routes_requests():
@@ -190,7 +223,9 @@ def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     assert "windowButton.disabled=true" in mode
     assert "workers.value='1'" in mode and "workers.hidden=true" in mode
     assert "applyColabWorkerStatus" in mode and "1 native worker" in mode
-    assert "usable CPU equivalent" in mode and "Native phase streaming currently supports" in mode
+    assert "usable CPU equivalent" in mode and "Native phase streaming supports" in mode
+    assert "fit search itself remains serial" in mode and "recommended_workers" in mode
+    assert "independent browser Web Workers" in html
     assert "dataset.supportedWorkers" in app and "applyColabWorkerStatus(document,data)" in app
     assert 'View / orientation <select id="orbit-view"' in html
     launcher=(ROOT / "notebooks" / "phoebe_lab_colab.py").read_text()

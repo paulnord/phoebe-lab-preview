@@ -14,10 +14,13 @@ from io import BytesIO
 from pathlib import Path
 import importlib.util
 import json
+import multiprocessing
 import os
+import queue
 import sys
 import threading
 import tempfile
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,6 +31,7 @@ PUBLISHED_BASE = "https://paulnord.github.io/phoebe-lab-preview/"
 _server = None
 _thread = None
 _download_root = None
+_kernel = None
 
 
 def _cgroup_cpu_quota():
@@ -56,6 +60,82 @@ def detected_cpu_capacity():
             "usable_cpu_equivalents":round(max(0.001,usable),3)}
 
 
+def supported_native_workers(capacity=None):
+    """Return the truthful phase-worker limit for this Python runtime."""
+    capacity=capacity or detected_cpu_capacity()
+    if "fork" not in multiprocessing.get_all_start_methods():return 1
+    return max(1,min(4,int(capacity["usable_cpu_equivalents"])))
+
+
+def _phase_worker_loop(model_path,tasks,results,slot):
+    """Keep one independent native PHOEBE model warm for exact phase batches."""
+    try:
+        os.environ.update(PHOEBE_ENABLE_ONLINE_PASSBANDS="FALSE",PHOEBE_ENABLE_MPI="FALSE",
+                          PHOEBE_MULTIPROC_NPROCS="0",OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1")
+        spec=importlib.util.spec_from_file_location(f"phoebe_lab_phase_worker_{slot}",model_path)
+        model=importlib.util.module_from_spec(spec);spec.loader.exec_module(model)
+        results.put(("ready",slot,os.getpid()))
+        while True:
+            task=tasks.get()
+            if task is None:return
+            task_id,payload=task
+            try:results.put(("result",task_id,model.worker_flux(payload)))
+            except BaseException as error:
+                results.put(("error",task_id,f"{type(error).__name__}: {error}",traceback.format_exc()))
+    except BaseException as error:
+        results.put(("startup_error",slot,f"{type(error).__name__}: {error}",traceback.format_exc()))
+
+
+class NativePhaseWorkers:
+    """Persistent forked PHOEBE helpers; the notebook process remains worker one."""
+    def __init__(self,model_path):
+        self.model_path=str(model_path);self.context=multiprocessing.get_context("fork")
+        self.tasks=None;self.results=None;self.processes=[];self.pids=[];self.sequence=0
+
+    def _start(self,count):
+        self.close();self.tasks=self.context.Queue();self.results=self.context.Queue();self.pids=[]
+        self.processes=[self.context.Process(target=_phase_worker_loop,
+                           args=(self.model_path,self.tasks,self.results,slot),daemon=True)
+                        for slot in range(count)]
+        for process in self.processes:process.start()
+
+    def close(self):
+        for process in self.processes:
+            if process.is_alive():process.terminate()
+        for process in self.processes:process.join(timeout=2)
+        for channel in (self.tasks,self.results):
+            if channel is not None:
+                try:channel.close()
+                except Exception:pass
+        self.tasks=None;self.results=None;self.processes=[];self.pids=[]
+
+    def calculate(self,payloads,local_flux,cancelled):
+        """Compute one wave, preserving generator order and stopping stale helpers."""
+        helper_count=max(0,len(payloads)-1)
+        if helper_count<1:return [local_flux(payloads[0])]
+        if len(self.processes)<helper_count:self._start(helper_count)
+        task_ids=[]
+        for payload in payloads[1:]:
+            self.sequence+=1;task_ids.append(self.sequence);self.tasks.put((self.sequence,payload))
+        local=local_flux(payloads[0])
+        if cancelled.is_set():self.close();raise RuntimeError("Cancelled.")
+        pending=set(task_ids);answers={}
+        while pending:
+            if cancelled.is_set():self.close();raise RuntimeError("Cancelled.")
+            if any(not process.is_alive() for process in self.processes):
+                self.close();raise RuntimeError("A native PHOEBE phase worker stopped unexpectedly.")
+            try:message=self.results.get(timeout=.05)
+            except queue.Empty:continue
+            kind=message[0]
+            if kind=="ready":
+                self.pids.append(message[2]);continue
+            if kind in ("startup_error","error"):
+                self.close();raise RuntimeError(f"Native PHOEBE phase worker failed: {message[2]}")
+            _,task_id,value=message
+            if task_id in pending:answers[task_id]=value;pending.remove(task_id)
+        return [local]+[answers[task_id] for task_id in task_ids]
+
+
 class NativeKernel:
     """Serialize the shared UI's heavy work through native PHOEBE in Python."""
     def __init__(self, site):
@@ -64,12 +144,26 @@ class NativeKernel:
         path = Path(site) / "engine" / "model.py"
         spec = importlib.util.spec_from_file_location("phoebe_lab_native_model", path)
         self.model = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.model)
+        self.model_path=path;self.capacity=detected_cpu_capacity()
+        self.supported_workers=supported_native_workers(self.capacity)
+        self.phase_workers=NativePhaseWorkers(path)
         self.lock = threading.Lock(); self.jobs = {}; self.jobs_lock = threading.Lock()
+
+    def close(self):self.phase_workers.close()
+
+    def _worker_count(self,payload):
+        value=payload.get("workers",1)
+        if type(value) is not int or not 1<=value<=self.supported_workers:
+            raise ValueError(f"Choose between 1 and {self.supported_workers} native phase workers.")
+        return value
 
     def status(self):
         return {"backend":"native-python", "version":self.model.phoebe.__version__,
                 "runtime":f"{sys.executable} · Python {sys.version.split()[0]}", "pid":os.getpid(),
-                "cpu_capacity":detected_cpu_capacity(),"supported_workers":1}
+                "cpu_capacity":self.capacity,"supported_workers":self.supported_workers,
+                "recommended_workers":self.supported_workers,
+                "worker_backend":"persistent-python-processes",
+                "worker_pids":[process.pid for process in self.phase_workers.processes if process.is_alive()]}
 
     def cancel(self, job_id):
         with self.jobs_lock:
@@ -83,13 +177,25 @@ class NativeKernel:
         try:
             with self.lock:
                 if operation not in ("compute","fit"):raise ValueError("Unknown streamed native operation.")
-                steps=(self.model.progressive_fit if operation=="fit" else self.model.progressive_curve)(dict(payload,workers=1))
-                for update in steps:
+                workers=self._worker_count(payload)
+                steps=(self.model.progressive_fit if operation=="fit" else self.model.progressive_curve)(dict(payload,workers=workers))
+                response=None
+                while True:
                     if cancelled.is_set():raise RuntimeError("Cancelled.")
-                    if update["type"]=="work":raise RuntimeError("The serialized native kernel requested unexpected parallel work.")
+                    try:update=next(steps) if response is None else steps.send(response)
+                    except StopIteration:return
+                    response=None
+                    if update["type"]=="work":
+                        payloads=[{"parameters":update["parameters"],"quality":update["quality"],"indices":indices}
+                                  for indices in update["groups"]]
+                        response=self.phase_workers.calculate(payloads,self.model.worker_flux,cancelled)
+                        continue
                     if update["type"]=="result":
                         update["result"]["runtime"]="Colab native Python"
                         update["result"]["native_python"]=True
+                        parameters=update["result"].get("parameters",{})
+                        surface=any(parameters.get(key) for key in ("contact","semidetached","distortion","irradiation"))
+                        update["result"]["surface_workers"]=workers if surface else 1
                     yield update
         finally:
             with self.jobs_lock:self.jobs.pop(job_id,None)
@@ -104,11 +210,12 @@ class NativeKernel:
                     value=self.model.surface_mesh(payload)
                     return {"value":value,"runtime":self.status()}
                 if operation == "fit":
-                    result=self.model.fit(dict(payload,workers=1))
+                    result=self.model.fit(dict(payload,workers=self._worker_count(payload)))
                 elif operation == "compute":
                     result=None
-                    for update in self.model.progressive_curve(dict(payload,workers=1)):
+                    for update in self.model.progressive_curve(dict(payload,workers=self._worker_count(payload))):
                         if cancelled.is_set(): raise RuntimeError("Cancelled.")
+                        if update["type"]=="work":raise RuntimeError("Non-streaming parallel compute is unavailable.")
                         if update["type"] == "result":result=update["result"]
                     if result is None:raise RuntimeError("Native PHOEBE did not return a complete curve.")
                 else:raise ValueError("Unknown native operation.")
@@ -245,14 +352,16 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
 
 def start_lab(site=None, kernel=None):
     """Start or restart the loopback server and return it."""
-    global _server, _thread
+    global _server, _thread, _kernel
     if _server is not None:
         _server.shutdown()
         _server.server_close()
+        if hasattr(_kernel,"close"):_kernel.close()
     site = Path(site) if site is not None else find_local_site()
     if site is None:
         site = download_feature_site()
     if kernel is None:kernel=NativeKernel(site)
+    _kernel=kernel
     handler_class=type("BoundLabOverlayHandler",(LabOverlayHandler,),{"native_kernel":kernel})
     handler = partial(handler_class, directory=str(site.resolve()))
     _server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -276,8 +385,10 @@ def show_lab(height=1050, site=None):
 
 
 def stop_lab():
-    global _server
+    global _server, _kernel
     if _server is not None:
         _server.shutdown()
         _server.server_close()
         _server = None
+    if hasattr(_kernel,"close"):_kernel.close()
+    _kernel=None
