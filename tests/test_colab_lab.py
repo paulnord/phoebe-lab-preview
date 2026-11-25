@@ -163,6 +163,7 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
     class FakeKernel:
         def __init__(self): self.calls=[]
         def status(self): return {"backend":"native-python","version":"2.5.4","pid":123,
+                                  "environment":{"python":"3.12.0","phoebe":"2.5.4","numpy":"2.0.2","scipy":"1.15.3","astropy":"7.1.0","matplotlib":"3.11.2","passband":"Johnson:V","passband_sha256":"abc123","passband_bytes":14719680},
                                   "cpu_capacity":{"affinity_cpus":4,"cgroup_quota_cpus":2.,"usable_cpu_equivalents":2.},
                                   "supported_workers":1}
         def cancel(self, job_id): self.calls.append(("cancel",job_id))
@@ -181,6 +182,7 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
         assert 'content="colab-native-required"' in index and "_phoebe_native/" in index
         status=json.load(urllib.request.urlopen(base+"/_phoebe_native/status",timeout=5))
         assert status["backend"]=="native-python" and status["version"]=="2.5.4"
+        assert status["environment"]["passband_sha256"]=="abc123"
         assert status["supported_workers"]==1 and status["cpu_capacity"]["usable_cpu_equivalents"]==2.
         body=json.dumps({"id":"job-7","operation":"compute","payload":{"geometry":"contact"}}).encode()
         request=urllib.request.Request(base+"/_phoebe_native/run",data=body,

@@ -3,9 +3,11 @@
 The browser calls these functions inside Pyodide. No HTTP/model server is used.
 """
 import hashlib
+import importlib.metadata
 import json
 from pathlib import Path
 import math
+import sys
 import time
 from functools import lru_cache
 import numpy as np
@@ -35,6 +37,49 @@ _last_complete = None
 # The detached branch below is intentionally unchanged.  Keep the verified
 # detached reference fingerprint while contact physics lives in its own branch.
 DETACHED_REFERENCE_PHYSICS_SHA256 = "fc433ee05a2a630d3d38ca2379c4aa196bb231eb7b496df8e400ec6d9b7b8fd0"
+
+
+@lru_cache(maxsize=1)
+def runtime_diagnostic():
+    """Return enough local provenance to compare a failing hosted runtime."""
+    versions = {}
+    for name in ("numpy", "scipy", "astropy", "matplotlib"):
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[name] = "unavailable"
+    diagnostic = {
+        "python": sys.version.split()[0],
+        "phoebe": phoebe.__version__,
+        **versions,
+        "passband": "Johnson:V",
+    }
+    try:
+        filename = Path(phoebe.list_installed_passbands(full_dict=True)["Johnson:V"]["fname"])
+        diagnostic.update(
+            passband_bytes=filename.stat().st_size,
+            passband_sha256=hashlib.sha256(filename.read_bytes()).hexdigest(),
+        )
+    except (KeyError, OSError, TypeError):
+        diagnostic.update(passband_bytes=None, passband_sha256="unavailable")
+    return diagnostic
+
+
+def _invalid_curve_diagnostic(phases, flux):
+    expected = np.asarray(phases, dtype=float)
+    actual = np.asarray(flux, dtype=float)
+    bad = np.flatnonzero(~np.isfinite(actual) | (actual <= 0)) if actual.ndim == 1 else np.array([], dtype=int)
+    bad_phases = expected[bad[:8]].tolist() if actual.shape == expected.shape else []
+    finite = actual[np.isfinite(actual)]
+    runtime = runtime_diagnostic()
+    return (
+        f"samples={actual.size}/{expected.size}; invalid={len(bad)}; "
+        f"invalid phases={bad_phases}; finite range="
+        f"{float(np.min(finite)) if finite.size else 'none'}..{float(np.max(finite)) if finite.size else 'none'}; "
+        f"Python {runtime['python']}; PHOEBE {runtime['phoebe']}; NumPy {runtime['numpy']}; "
+        f"SciPy {runtime['scipy']}; Astropy {runtime['astropy']}; Matplotlib {runtime['matplotlib']}; "
+        f"Johnson:V {runtime['passband_sha256']} ({runtime['passband_bytes']} bytes)"
+    )
 
 
 def _stage(message):
@@ -192,7 +237,11 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None, _retry_invalid=T
         return _physical_flux(p, quality, phases=phases, ntriangles=ntriangles, _retry_invalid=False)
     if invalid:
         mode = "contact" if p["contact"] else (f"semi-detached {p['donor']}-donor" if p["semidetached"] else "detached")
-        raise ValueError(f"PHOEBE could not produce a finite, positive {mode} light curve after rebuilding the cached model. Reset the parameters to a supported configuration and retry.")
+        detail = _invalid_curve_diagnostic(phases, flux)
+        raise ValueError(
+            f"PHOEBE could not produce a finite, positive {mode} light curve after rebuilding the cached model. "
+            f"Reset the parameters to a supported configuration and retry. Runtime diagnostic: {detail}"
+        )
     return phases, flux
 
 

@@ -9,7 +9,7 @@ const workers={value:'8',disabled:false,hidden:false,dataset:{},children:[],clos
   replaceChildren(){this.children=[];},append(child){this.children.push(child);}};
 elements=new Map([
   ['engine-pill',{}],['model-status-text',{}],['engine-title',{}],['engine-detail',{}],
-  ['engine-runtime',{}],['native-button',{disabled:false,title:''}],['window-button',{disabled:false,title:''}],
+  ['engine-runtime',{}],['engine-environment',{hidden:true,textContent:'',title:''}],['native-button',{disabled:false,title:''}],['window-button',{disabled:false,title:''}],
   ['surface-workers',workers],['data-file',{accept:'.phoebe'}],
 ]);
 const footer={textContent:'browser'};const formats={textContent:'native files'};
@@ -34,10 +34,13 @@ assert.match(guide.innerHTML,/native Python process/);
 assert.equal(footer.textContent,'Uploaded observations stay in this Colab session.');
 assert.equal(workers.hidden,true);assert.equal(workers.disabled,true);
 
-applyColabWorkerStatus(doc,{cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:2.5,usable_cpu_equivalents:2.5},supported_workers:1});
+const environment={python:'3.12.0',phoebe:'2.5.4',numpy:'2.0.2',scipy:'1.15.3',astropy:'7.1.0',matplotlib:'3.11.2',passband:'Johnson:V',passband_sha256:'abcdef1234567890',passband_bytes:14719680};
+applyColabWorkerStatus(doc,{environment,cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:2.5,usable_cpu_equivalents:2.5},supported_workers:1});
 assert.equal(workers.dataset.supportedWorkers,'1');assert.equal(workers.children.length,1);
 assert.match(workerSmall.textContent,/2.5 usable CPU equivalents detected/);assert.match(workerSmall.textContent,/supports 1 worker/);
-applyColabWorkerStatus(doc,{cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:4,usable_cpu_equivalents:4},supported_workers:4,recommended_workers:4});
+assert.equal(elements.get('engine-environment').hidden,false);assert.match(elements.get('engine-environment').textContent,/NumPy 2.0.2/);
+assert.match(elements.get('engine-environment').title,/abcdef1234567890/);
+applyColabWorkerStatus(doc,{environment,cpu_capacity:{affinity_cpus:8,cgroup_quota_cpus:4,usable_cpu_equivalents:4},supported_workers:4,recommended_workers:4});
 assert.equal(workers.dataset.supportedWorkers,'4');assert.equal(workers.children.length,4);
 assert.equal(workers.value,'4');assert.equal(workers.hidden,false);assert.equal(workers.disabled,false);
 assert.match(workerSmall.textContent,/fit search itself remains serial/);

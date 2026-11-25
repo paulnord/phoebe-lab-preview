@@ -161,6 +161,7 @@ class NativeKernel:
     def status(self):
         return {"backend":"native-python", "version":self.model.phoebe.__version__,
                 "runtime":f"{sys.executable} · Python {sys.version.split()[0]}", "pid":os.getpid(),
+                "environment":self.model.runtime_diagnostic(),
                 "cpu_capacity":self.capacity,"supported_workers":self.supported_workers,
                 "recommended_workers":self.supported_workers,
                 "worker_backend":"persistent-python-processes",

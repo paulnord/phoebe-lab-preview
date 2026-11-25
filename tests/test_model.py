@@ -63,5 +63,18 @@ class ObservationTests(unittest.TestCase):
         finally:
             model._semi_bundles.clear();model._semi_bundles.update(old)
 
+    def test_second_invalid_curve_reports_runtime_and_bad_phases(self):
+        phases=np.linspace(-.5,.5,5)
+        with patch.object(model,"runtime_diagnostic",return_value={
+            "python":"3.12.0","phoebe":"2.5.4","numpy":"2.0.2","scipy":"1.15.3",
+            "astropy":"7.1.0","matplotlib":"3.11.2","passband":"Johnson:V",
+            "passband_sha256":"abc123","passband_bytes":14719680,
+        }):
+            message=model._invalid_curve_diagnostic(phases,np.array([1.,np.nan,0.,.8,1.]))
+        self.assertIn("invalid=2",message)
+        self.assertIn("invalid phases=[-0.25, 0.0]",message)
+        self.assertIn("PHOEBE 2.5.4",message)
+        self.assertIn("Johnson:V abc123 (14719680 bytes)",message)
+
 if __name__ == "__main__":
     unittest.main()

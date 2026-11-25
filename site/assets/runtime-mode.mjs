@@ -16,6 +16,11 @@ export function applyColabWorkerStatus(doc,info){
   const detected=Number.isFinite(usable)?`${usable} usable CPU equivalent${usable===1?'':'s'} detected`:'runtime CPU capacity unavailable';
   const limit=Number.isFinite(affinity)?` (${affinity} affinity CPU${affinity===1?'':'s'}${quota==null?'':`, ${quota} quota`})`:'';
   workerRow.querySelector('small').textContent=`${detected}${limit}. Native phase streaming supports ${supported} worker${supported===1?'':'s'}; the fit search itself remains serial, then its final exact curve uses this selection.`;
+  const environment=info?.environment||{},fingerprint=String(environment.passband_sha256||'unavailable');
+  const detail=doc.getElementById('engine-environment');
+  detail.hidden=false;
+  detail.textContent=`Python ${environment.python||'?'} · NumPy ${environment.numpy||'?'} · SciPy ${environment.scipy||'?'} · Astropy ${environment.astropy||'?'} · Johnson:V ${fingerprint.slice(0,12)}`;
+  detail.title=`PHOEBE ${environment.phoebe||'?'}; Matplotlib ${environment.matplotlib||'?'}; Johnson:V SHA-256 ${fingerprint}; ${environment.passband_bytes??'?'} bytes`;
 }
 
 export function applyColabRuntimeUI(doc,config){
