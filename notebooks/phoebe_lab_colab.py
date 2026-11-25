@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-SOURCE_REVISION = "467556f1415ae7c8545e71c08751b1158288dd75"
+SOURCE_REVISION = "e4694defb02385612999175a429dd12a5e9ccb6b"
 SOURCE_ARCHIVE = f"https://github.com/paulnord/phoebe-lab-preview/archive/{SOURCE_REVISION}.zip"
 PUBLISHED_BASE = "https://paulnord.github.io/phoebe-lab-preview/"
 _server = None
