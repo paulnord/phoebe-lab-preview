@@ -74,7 +74,10 @@ def test_generated_notebook_exposes_full_lab_and_native_runtime():
     assert "observation loading" in source and "bounded native fitting" in source
     assert "show_lab(height=1050)" in source
     assert "LabOverlayHandler" in source
-    assert 'phoebe==2.5.4' in source
+    assert '"phoebe":"2.5.4"' in source
+    assert '"numpy":"2.1.3"' in source
+    assert 'PHOEBE_MULTIPROC_NPROCS="0"' in source
+    assert source.index('PHOEBE_MULTIPROC_NPROCS="0"') < source.index('import astropy, matplotlib, numpy, phoebe, scipy')
     assert "Colab native Python" in source
     assert "exact curves, fits, and native surface meshes" in source
     assert "Run PHOEBE Lab Compute and Fit in this notebook's native Python PHOEBE runtime" in source

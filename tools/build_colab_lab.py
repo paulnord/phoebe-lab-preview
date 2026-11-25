@@ -24,17 +24,21 @@ The PHOEBE Lab workbench includes observation loading, light-curve and residual 
 Choose **Detached**, **Semi-detached**, or **Contact** at the top of the model panel. Semi-detached exposes the donor choice and one free-star radius; contact exposes the shared-envelope fill-out factor. Trained curves remain display-only. Explicit compute and fit actions use PHOEBE and invalidate stale statistics/export whenever the data, geometry, donor, or parameters change.
 
 Choose **Runtime → Run all**. The three code cells are collapsed by default; each can be expanded if you want to inspect the source, and runtime errors remain in its output. Colab uses a free CPU runtime. The interface runs in an iframe served by this notebook kernel. Instant trained previews and orbit playback stay in the browser, but exact curves, fits, and native surface meshes are sent to **native PHOEBE 2.5.4 in this Colab Python runtime**—never silently to browser WebAssembly. Uploaded observations stay within this notebook/browser session."""),
-    collapsed_code("1 · Install native PHOEBE", """# Install the authoritative native engine in this Colab/Jupyter kernel.
-import importlib.metadata, subprocess, sys
-try:
-    installed_phoebe = importlib.metadata.version("phoebe")
-except importlib.metadata.PackageNotFoundError:
-    installed_phoebe = None
-if installed_phoebe != "2.5.4":
-    subprocess.check_call([sys.executable,"-m","pip","install","-q","phoebe==2.5.4","scipy"])
-import phoebe
+    collapsed_code("1 · Install native PHOEBE", """# Install the validated native engine stack in this Colab/Jupyter kernel.
+import importlib.metadata, os, subprocess, sys
+os.environ.update(PHOEBE_ENABLE_ONLINE_PASSBANDS="FALSE",PHOEBE_ENABLE_MPI="FALSE",
+                  PHOEBE_MULTIPROC_NPROCS="0",OMP_NUM_THREADS="1",OPENBLAS_NUM_THREADS="1")
+required={"phoebe":"2.5.4","numpy":"2.1.3","scipy":"1.16.3","astropy":"7.2.3","matplotlib":"3.10.0"}
+def installed_version(name):
+    try:return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:return None
+installed={name:installed_version(name) for name in required}
+if any(installed[name] != version for name,version in required.items()):
+    subprocess.check_call([sys.executable,"-m","pip","install","-q",*[f"{name}=={version}" for name,version in required.items()]])
+import astropy, matplotlib, numpy, phoebe, scipy
 assert phoebe.__version__ == "2.5.4", phoebe.__version__
-print("Native PHOEBE",phoebe.__version__,"·",sys.executable)
+assert numpy.__version__ == "2.1.3", numpy.__version__
+print("Native PHOEBE",phoebe.__version__,"· NumPy",numpy.__version__,"·",sys.executable)
 """),
     collapsed_code("2 · Load the native workbench bridge", LAUNCHER),
     collapsed_code("3 · Launch PHOEBE Lab", """# Re-run this cell to restart the PHOEBE Lab server and interface.
@@ -43,6 +47,7 @@ lab_server = show_lab(height=1050)
     nbf.v4.new_markdown_cell("""## Runtime notes
 
 - **Colab:** supported on the free CPU runtime. Exact curves, bounded fits, residual/export results, and native orbit meshes run in the notebook's native Python process. The top status pill and result provenance say `Colab native`.
+- **Validated numerical stack:** the install cell pins NumPy 2.1.3 with PHOEBE 2.5.4, SciPy 1.16.3, Astropy 7.2.3, and Matplotlib 3.10.0. This keeps NumPy inside PHOEBE's build constraint; if an already-running kernel had imported another NumPy version, restart the session and choose **Run all** again.
 - Native Colab curves arrive in genuine PHOEBE phase batches, so the plot fills in progressively before the authoritative final normalization/statistics/export result.
 - **Native phase workers:** the notebook reports affinity and CPU quota separately, then offers only the worker counts its persistent native-Python phase pool supports (up to four). The maximum truthful supported count is selected by default, with every lower count still available. This parallelizes exact surface phase batches and the final fitted curve; bounded fit trials remain serial and deterministic.
 - **Local Jupyter/classic:** supported when the browser and kernel share the same computer. Run the notebook from a repository checkout to use its local `site/` files.
