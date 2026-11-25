@@ -205,6 +205,51 @@ def test_colab_overlay_injects_native_transport_and_routes_requests():
     finally: launcher.stop_lab()
 
 
+def test_bounded_diagnostic_reaches_both_native_error_handlers():
+    probe='diagnostic_probe={"invalid": 0, "samples": "5/5", "settings": "blackbody/manual-linear"}'
+    options=('compute_options={"atm_primary": "ck2004", "atm_secondary": "ck2004", '
+             '"irrad_method": "none", "ld_primary": "interp", "ld_secondary": "interp"}')
+    detail=("Authoritative PHOEBE failure. Runtime diagnostic: samples=5/5; invalid=5; "
+            "invalid phases=[-0.5, -0.25, 0.0, 0.25, 0.5]; finite range=none..none; "
+            + "payload=" + "x"*1000 + "; " + options + "; " + probe)
+
+    class FailingKernel:
+        def run(self,*args,**kwargs):raise ValueError(detail)
+        def stream(self,*args,**kwargs):
+            if False:yield None
+            raise ValueError(detail)
+        def close(self):pass
+
+    server=launcher.start_lab(ROOT/"site",kernel=FailingKernel())
+    try:
+        base=f"http://127.0.0.1:{server.server_address[1]}"
+        body=json.dumps({"id":"bad","operation":"compute","payload":{}}).encode()
+        request=urllib.request.Request(base+"/_phoebe_native/run",data=body,
+                                       headers={"Content-Type":"application/json"})
+        try:urllib.request.urlopen(request,timeout=5)
+        except urllib.error.HTTPError as error:run_error=json.load(error)["error"]
+        stream_request=urllib.request.Request(base+"/_phoebe_native/stream",data=body,
+                                              headers={"Content-Type":"application/json"})
+        stream_error=[json.loads(line) for line in urllib.request.urlopen(stream_request,timeout=5)][0]["error"]
+        for message in (run_error,stream_error):
+            assert len(message)<=900
+            assert "diagnostic_probe=" in message and "blackbody/manual-linear" in message
+            assert "compute_options=" in message and '"atm_primary":"ck2004"' in message
+            assert "payload=" not in message
+        assert launcher._bounded_native_error(ValueError("x"*1000))=="x"*900
+    finally:launcher.stop_lab()
+
+
+def test_running_kernel_can_print_saved_diagnostic(capsys):
+    old=launcher._kernel
+    launcher._kernel=types.SimpleNamespace(model=types.SimpleNamespace(
+        last_invalid_curve_diagnostic=lambda:"diagnostic_probe={finite}"))
+    try:
+        assert launcher.print_last_native_diagnostic()=="diagnostic_probe={finite}"
+        assert capsys.readouterr().out.strip()=="diagnostic_probe={finite}"
+    finally:launcher._kernel=old
+
+
 def test_shared_ui_has_explicit_colab_native_and_standalone_wasm_transports():
     app=(ROOT / "site" / "assets" / "app.js").read_text()
     client=(ROOT / "site" / "assets" / "engine-client.mjs").read_text()

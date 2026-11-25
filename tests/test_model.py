@@ -112,5 +112,12 @@ class ObservationTests(unittest.TestCase):
         finally:
             model._semi_bundles.clear();model._semi_bundles.update(old)
 
+    def test_last_invalid_diagnostic_accessor(self):
+        old=model._last_invalid_diagnostic
+        try:
+            model._last_invalid_diagnostic="diagnostic_probe={finite}"
+            self.assertEqual(model.last_invalid_curve_diagnostic(),"diagnostic_probe={finite}")
+        finally:model._last_invalid_diagnostic=old
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ _contact_bundle = None
 _semi_bundles = {}
 _orbit_mesh_bundles = {}
 _last_complete = None
+_last_invalid_diagnostic = None
 # The detached branch below is intentionally unchanged.  Keep the verified
 # detached reference fingerprint while contact physics lives in its own branch.
 DETACHED_REFERENCE_PHYSICS_SHA256 = "fc433ee05a2a630d3d38ca2379c4aa196bb231eb7b496df8e400ec6d9b7b8fd0"
@@ -157,6 +158,11 @@ def _invalid_curve_diagnostic(phases, flux, *, bundle=None, parameters_used=None
     )
 
 
+def last_invalid_curve_diagnostic():
+    """Return the last full invalid native-curve diagnostic in this process."""
+    return _last_invalid_diagnostic or "No invalid native curve has been recorded in this kernel."
+
+
 def _stage(message):
     try:
         from js import modelProgress
@@ -236,7 +242,8 @@ def _reset_curve_bundle(p):
 
 
 def _physical_flux(p, quality, *, phases=None, ntriangles=None, _retry_invalid=True):
-    global _bundle, _contact_bundle, _semi_bundles
+    global _bundle, _contact_bundle, _semi_bundles, _last_invalid_diagnostic
+    _last_invalid_diagnostic = None
     if p["contact"] and _contact_bundle is None:
         _stage("Building the native contact-envelope system…")
         _contact_bundle = phoebe.default_contact_binary()
@@ -314,6 +321,7 @@ def _physical_flux(p, quality, *, phases=None, ntriangles=None, _retry_invalid=T
         mode = "contact" if p["contact"] else (f"semi-detached {p['donor']}-donor" if p["semidetached"] else "detached")
         detail = _invalid_curve_diagnostic(
             phases, flux, bundle=b, parameters_used=p, quality=quality)
+        _last_invalid_diagnostic = detail
         raise ValueError(
             f"PHOEBE could not produce a finite, positive {mode} light curve after rebuilding the cached model. "
             f"Reset the parameters to a supported configuration and retry. Runtime diagnostic: {detail}"

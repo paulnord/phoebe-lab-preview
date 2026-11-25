@@ -33,6 +33,64 @@ _server = None
 _thread = None
 _download_root = None
 _kernel = None
+_ERROR_LIMIT = 900
+
+
+def _bounded_native_error(error, limit=_ERROR_LIMIT):
+    """Keep ordinary errors bounded while retaining decisive PHOEBE diagnostics."""
+    text = str(error)
+    if len(text) <= limit:
+        return text
+    marker = "Runtime diagnostic: "
+    if marker not in text:
+        return text[:limit]
+    heading, detail = text.split(marker, 1)
+    if len(heading) > 260:
+        heading = heading[:257] + "..."
+    fields = {}
+    for field in detail.split("; "):
+        key = field.split("=", 1)[0]
+        fields[key] = field
+
+    def compact_json(name):
+        field = fields.get(name)
+        if field is None:
+            return None
+        try:
+            value = json.loads(field.split("=", 1)[1])
+            if name == "diagnostic_probe" and isinstance(value, dict):
+                failure = value.get("error")
+                if isinstance(failure, str) and len(failure) > 120:
+                    value["error"] = failure[:117] + "..."
+            return name + "=" + json.dumps(value, sort_keys=True, separators=(",", ":"))
+        except (ValueError, TypeError):
+            return field
+
+    # These are the discriminators needed when the authoritative atmosphere
+    # result is NaN.  Put them before provenance and the long physical payload.
+    ordered = [
+        compact_json("diagnostic_probe"), compact_json("compute_options"),
+        fields.get("samples"), fields.get("invalid"), fields.get("invalid phases"),
+        fields.get("finite range"), fields.get("quality"), fields.get("libphoebe"),
+        fields.get("ceclipse"), fields.get("platform"), fields.get("libc"),
+    ]
+    result = heading + marker
+    for field in (field for field in ordered if field):
+        candidate = result + ("; " if not result.endswith(marker) else "") + field
+        if len(candidate) <= limit:
+            result = candidate
+    return result[:limit]
+
+
+def print_last_native_diagnostic():
+    """Print the current kernel's last full invalid-curve diagnostic, if any."""
+    if _kernel is None:
+        value = "PHOEBE Lab native kernel is not running."
+    else:
+        getter = getattr(_kernel.model, "last_invalid_curve_diagnostic", None)
+        value = getter() if getter is not None else "This engine does not expose a saved diagnostic."
+    print(value)
+    return value
 
 
 def _cgroup_cpu_quota():
@@ -306,7 +364,7 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps(update,allow_nan=False).encode()+b"\n");self.wfile.flush()
         except (BrokenPipeError,ConnectionResetError):return
         except Exception as error:
-            try:self.wfile.write(json.dumps({"type":"error","error":str(error)[:900]}).encode()+b"\n");self.wfile.flush()
+            try:self.wfile.write(json.dumps({"type":"error","error":_bounded_native_error(error)}).encode()+b"\n");self.wfile.flush()
             except (BrokenPipeError,ConnectionResetError):return
 
     def _serve_colab_index(self):
@@ -342,7 +400,7 @@ class LabOverlayHandler(SimpleHTTPRequestHandler):
             try:return self._json(value)
             except (BrokenPipeError,ConnectionResetError):return
         except Exception as error:
-            try:return self._json({"error":str(error)[:900]},409 if "Cancelled" in str(error) else 400)
+            try:return self._json({"error":_bounded_native_error(error)},409 if "Cancelled" in str(error) else 400)
             except (BrokenPipeError,ConnectionResetError):return
 
     def do_HEAD(self):
