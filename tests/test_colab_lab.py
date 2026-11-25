@@ -120,6 +120,16 @@ def test_colab_reports_affinity_quota_and_bounded_process_workers(monkeypatch):
     assert "PHOEBE_ENABLE_MPI=\"FALSE\"" in source
 
 
+def test_colab_source_archive_is_commit_pinned_and_notebook_matches_launcher():
+    source=(ROOT/"notebooks"/"phoebe_lab_colab.py").read_text()
+    notebook=(ROOT/"notebooks"/"PHOEBE_Semi_Detached_Binary_Colab.ipynb").read_text()
+    revision="135af03a3a6f3cadd218feb1eb79d82f86f13316"
+    assert f'SOURCE_REVISION = "{revision}"' in source
+    assert f'SOURCE_REVISION = \\u0022{revision}\\u0022' in notebook or f'SOURCE_REVISION = \\\"{revision}\\\"' in notebook
+    assert "archive/refs/heads/semi-detached.zip" not in source
+    assert "archive/refs/heads/semi-detached.zip" not in notebook
+
+
 def test_colab_kernel_services_parallel_work_protocol_and_provenance():
     class FakeModel:
         phoebe=types.SimpleNamespace(__version__="2.5.4")
