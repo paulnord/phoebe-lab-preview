@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {parameterExport,parameterTable,scientificFigureSvg} from '../site/assets/scientific-export.mjs';
+import {parameterExport,parameterTable,parameterTsv,scientificFigurePdf,scientificFigureSvg} from '../site/assets/scientific-export.mjs';
 
 const parameters={contact:true,semidetached:false,donor:'primary',inclination:86,radius_primary:.21,
   radius_secondary:.17,fillout_factor:.134,temperature_ratio:1.032,mass_ratio:.534,eccentricity:0,
@@ -22,11 +22,20 @@ assert.equal(fitted.model.phase_zero_definition,'epoch / PHOEBE t0_supconj');
 assert.equal(fitted.fit.uncertainties,null);assert.equal(fitted.statistics.residual_rms,.01);
 assert.equal(parameterTable(fitted).find(row=>row.parameter==='mass_ratio').role,'fitted');
 assert.equal(parameterTable(fitted).find(row=>row.parameter==='period').role,'held fixed during fit');
+const tsv=parameterTsv(fitted);assert(tsv.startsWith('Parameter\tValue\tUnit\tRole\r\n'));
+assert(tsv.includes('mass_ratio\t0.534\tM2/M1\tfitted'));assert.equal(typeof parameterTable(fitted)[0].value,'number');
 
 assert.throws(()=>scientificFigureSvg({datasetName:'none',result:null}),/current completed/);
 const svg=scientificFigureSvg({datasetName:'Held-out & checked',result});
-for(const text of ['<svg','Normalized flux','Residual (observed - model)','Orbital phase','Authoritative native PHOEBE model','Colab native Python'])assert(svg.includes(text),text);
+for(const text of ['<svg','Normalized flux','Residual (observed - model)','Orbital phase','Authoritative PHOEBE model','Colab native Python'])assert(svg.includes(text),text);
 assert(svg.includes('Held-out &amp; checked'));assert(svg.includes('class="model"'));
-assert.equal((svg.match(/class="observation"/g)||[]).length,2);
-assert.equal((svg.match(/class="residual"/g)||[]).length,2);
-console.log(JSON.stringify({status:'PASS',svg_bytes:svg.length,parameter_rows:parameterTable(fitted).length}));
+assert.equal((svg.match(/r="2" class="observation"/g)||[]).length,2);
+assert.equal((svg.match(/r="2" class="residual"/g)||[]).length,2);
+const curveOnly=scientificFigureSvg({datasetName:'Curve only',result,width:720,height:540,
+  options:{observations:false,model:true,residuals:false,legend:false}});
+assert.equal((curveOnly.match(/class="observation"/g)||[]).length,0);assert(!curveOnly.includes('Residual (observed - model)'));
+assert.throws(()=>scientificFigureSvg({datasetName:'blank',result,options:{observations:false,model:false}}),/Select observations/);
+const pdf=scientificFigurePdf({datasetName:'Held-out & checked',result,width:1200,height:900});
+const pdfText=new TextDecoder().decode(pdf);assert(pdfText.startsWith('%PDF-1.4'));assert(pdfText.endsWith('%%EOF\n'));
+for(const marker of ['/Type /Page','Authoritative PHOEBE model',String.raw`Residual \(observed - model\)`,'xref'])assert(pdfText.includes(marker),marker);
+console.log(JSON.stringify({status:'PASS',svg_bytes:svg.length,pdf_bytes:pdf.length,parameter_rows:parameterTable(fitted).length}));

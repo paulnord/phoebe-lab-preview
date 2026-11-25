@@ -56,10 +56,15 @@ def test_fit_scope_and_final_grid_are_explicit_in_source():
 
 def test_cross_mode_change_invalidates_exact_outputs_in_ui_source():
     source = (ROOT / "site/assets/app.js").read_text()
+    html = (ROOT / "site/index.html").read_text()
     assert "state.current.mode!==modeOf(state.parameters)" in source
     assert "requestMatches(current,state.revision,modeOf(state.parameters))" in source
     assert "state.revision++;" in source
     assert "state.revision++;\n  updateExportButtons();" in source
     assert "$('export-button').disabled=!exact" in source
     assert "$('figure-export-button').disabled=!exact" in source
+    for control in ("download-figure-svg", "download-figure-png", "download-figure-pdf", "copy-parameters-excel", "parameter-copy-text"):
+        assert f'id="{control}"' in html
+    assert "if(!options.observations&&!options.model)" in source
+    assert "if(!currentExact())throw Error" in source
     assert "updateStats()" in source

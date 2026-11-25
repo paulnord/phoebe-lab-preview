@@ -8,7 +8,7 @@ import {createScientificEngine,nativeKernelConfig,nativeKernelRequired} from './
 import {applyColabRuntimeUI,applyColabWorkerStatus,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-capacity1';
 import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
 import {OBSERVATION_EXAMPLES,observationDataset} from './observation-examples.mjs?v=published2';
-import {parameterExport,parameterTable,scientificFigureSvg} from './scientific-export.mjs?v=scientific-export1';
+import {parameterExport,parameterTable,parameterTsv,scientificFigurePdf,scientificFigureSvg} from './scientific-export.mjs?v=scientific-export2';
 const $ = (id) => document.getElementById(id);
 const colabNativeMode=nativeKernelRequired;
 applyColabRuntimeUI(document,colabNativeMode);
@@ -142,7 +142,41 @@ function showParameterRecord(){
     body.append(tr);
   }
   $('parameter-authority').textContent=report.authority.statement;
+  $('parameter-copy-fallback').hidden=true;
   $('parameter-dialog').showModal();
+}
+
+function figureRequest(){
+  const result=currentExact();if(!result)throw Error('Run an exact PHOEBE calculation before exporting a figure.');
+  const [width,height]=$('figure-size').value.split('x').map(Number);
+  const options={observations:$('figure-observations').checked,model:$('figure-model').checked,
+    residuals:$('figure-residuals').checked,legend:$('figure-legend').checked};
+  if(!options.observations&&!options.model)throw Error('Select observations or the exact curve.');
+  return {datasetName:state.dataset?.name,result,width,height,options};
+}
+
+function showFigureExport(){
+  if(!currentExact())return;
+  $('figure-error').textContent='';$('figure-dialog').showModal();
+}
+
+async function svgPngBlob(svg,width,height,scale){
+  const url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'})),image=new Image();
+  try{
+    await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(Error('The browser could not render the PNG source.'));image.src=url;});
+    const canvas=document.createElement('canvas');canvas.width=width*scale;canvas.height=height*scale;
+    const context=canvas.getContext('2d');context.imageSmoothingEnabled=true;context.imageSmoothingQuality='high';
+    context.drawImage(image,0,0,canvas.width,canvas.height);
+    return await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(Error('The browser could not encode PNG output.')),'image/png'));
+  }finally{URL.revokeObjectURL(url);}
+}
+
+async function copyWithFallback(text,label,fallbackText=text){
+  try{await navigator.clipboard.writeText(text);$('parameter-copy-fallback').hidden=true;toast(`Copied ${label}.`);}
+  catch{
+    const box=$('parameter-copy-text');box.value=fallbackText;$('parameter-copy-fallback').hidden=false;box.focus();box.select();
+    toast('Clipboard access was unavailable. The text is selected for manual copying.');
+  }
 }
 const legend = document.querySelector('.chart-legend span:last-child');
 
@@ -1061,7 +1095,7 @@ function prepareImport(parsed,name) {
   $('data-preview').replaceChildren(table);
 }
 
-function download(name,text,type='application/json') {const url=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function download(name,content,type='application/json') {const blob=content instanceof Blob?content:new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function loadExample(notify=true) {
   const id=++exampleRequest,choice=$('example-choice').value;
   try{
@@ -1138,17 +1172,21 @@ function bindEvents() {
     const quoted='"'+String(runtime).replaceAll('"','""')+'"';
     download('phoebe-model.csv','phase,normalized_flux,engine_runtime\n'+state.result.phases.map((x,i)=>`${x},${state.result.model[i]},${quoted}`).join('\n')+'\n','text/csv');
   };
-  $('figure-export-button').onclick=()=>{
-    const result=currentExact();if(!result)return;
-    download('phoebe-light-curve.svg',scientificFigureSvg({datasetName:state.dataset?.name,result}),'image/svg+xml');
+  $('figure-export-button').onclick=showFigureExport;
+  $('download-figure-svg').onclick=()=>{try{const request=figureRequest();download('phoebe-light-curve.svg',scientificFigureSvg(request),'image/svg+xml');$('figure-error').textContent='';}catch(error){$('figure-error').textContent=error.message;}};
+  $('download-figure-pdf').onclick=()=>{try{const request=figureRequest();download('phoebe-light-curve.pdf',scientificFigurePdf(request),'application/pdf');$('figure-error').textContent='';}catch(error){$('figure-error').textContent=error.message;}};
+  $('download-figure-png').onclick=async()=>{
+    try{const request=figureRequest(),scale=Number($('figure-png-scale').value);$('figure-error').textContent='Rendering PNG…';
+      const blob=await svgPngBlob(scientificFigureSvg(request),request.width,request.height,scale);
+      if(!currentExact())throw Error('Parameters changed while the PNG was rendering; export cancelled.');
+      download('phoebe-light-curve.png',blob,'image/png');$('figure-error').textContent='';
+    }catch(error){$('figure-error').textContent=error.message;}
   };
   $('parameter-export-button').onclick=downloadParameterRecord;
   $('parameter-summary-button').onclick=showParameterRecord;
   $('download-parameters-dialog').onclick=downloadParameterRecord;
-  $('copy-parameters').onclick=async()=>{
-    try{await navigator.clipboard.writeText(JSON.stringify(parameterRecord(),null,2));toast('Copied parameter JSON.');}
-    catch{toast('Clipboard access was unavailable. Use Download JSON.');}
-  };
+  $('copy-parameters-excel').onclick=()=>{const report=parameterRecord();copyWithFallback(parameterTsv(report),'Excel-ready table');};
+  $('copy-parameters').onclick=()=>copyWithFallback(JSON.stringify(parameterRecord(),null,2),'parameter JSON');
   $('stop-button').onclick=()=>{if(state.current?.type==='compute') {
     if(state.current.mode!=='detached'||state.current.tides||state.current.heating){
       clearInterval(elapsedTimer);clearTimeout(computeTimer);

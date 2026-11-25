@@ -29,10 +29,13 @@ calculations finish. Stop ends ordinary refinement after the current batch. For 
 
 In Preview quality, drag a supported slider to see a broad, translucent approximate
 curve. Release to calculate the PHOEBE curve. Fitting, residual statistics, model CSV,
-and the editable observation/model/residual SVG use the current PHOEBE result. The
-separate parameter JSON/table records either that current exact result or an explicitly
-unfitted snapshot, including geometry, q/epoch definitions, units and provenance without
-invented parameter uncertainties.
+and configurable SVG, vector PDF and PNG figures use the current PHOEBE result. Figure
+exports can include observations, the exact curve, residuals and a legend at compact,
+standard or publication size. The separate parameter JSON/table records either that
+current exact result or an explicitly unfitted snapshot, including geometry, q/epoch
+definitions, units and provenance without invented parameter uncertainties. Its
+tab-separated clipboard form pastes into spreadsheet columns and exposes a manual-copy
+fallback when an embedded notebook cannot use the system clipboard.
 
 - At the default circular orbit, vary inclination, either fractional radius and
   temperature ratio together. Keep the other settings at their defaults.

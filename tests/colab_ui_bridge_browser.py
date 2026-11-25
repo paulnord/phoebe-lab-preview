@@ -117,11 +117,26 @@ def main():
             page.locator("#fit-form button[type=submit]").click()
             page.get_by_text("Local fit complete",exact=False).wait_for(timeout=15000)
             assert any(operation=="fit" for _,operation in kernel.calls if operation!="cancel")
+            page.locator("#figure-export-button").click()
+            page.locator("#figure-observations").uncheck()
+            page.locator("#figure-residuals").uncheck()
+            page.locator("#figure-legend").uncheck()
+            page.locator("#figure-size").select_option("720x540")
             with page.expect_download() as figure_download:
-                page.locator("#figure-export-button").click()
+                page.locator("#download-figure-svg").click()
             figure=figure_download.value.path().read_text()
-            assert "<svg" in figure and "Authoritative native PHOEBE model" in figure
-            assert "Colab native Python" in figure and "Residual (observed - model)" in figure
+            assert "<svg" in figure and "Authoritative PHOEBE model" in figure
+            assert "Colab native Python" in figure and "Residual (observed - model)" not in figure
+            page.locator("#figure-observations").check();page.locator("#figure-residuals").check();page.locator("#figure-legend").check()
+            page.locator("#figure-size").select_option("960x720");page.locator("#figure-png-scale").select_option("2")
+            with page.expect_download() as png_download:
+                page.locator("#download-figure-png").click()
+            assert png_download.value.path().read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+            with page.expect_download() as pdf_download:
+                page.locator("#download-figure-pdf").click()
+            pdf=pdf_download.value.path().read_bytes()
+            assert pdf.startswith(b"%PDF-1.4") and pdf.rstrip().endswith(b"%%EOF")
+            page.locator("#figure-dialog .close-dialog").click()
             with page.expect_download() as parameter_download:
                 page.locator("#parameter-export-button").click()
             parameters=json.loads(parameter_download.value.path().read_text())
@@ -130,6 +145,11 @@ def main():
             assert "inclination" in parameters["fit"]["parameters"]
             page.locator("#parameter-summary-button").click()
             assert page.locator("#parameter-table-body tr").count()>5
+            page.evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>Promise.reject(new Error('denied'))}})")
+            page.locator("#copy-parameters-excel").click()
+            fallback=page.locator("#parameter-copy-text")
+            assert fallback.is_visible() and fallback.input_value().startswith("Parameter\tValue\tUnit\tRole\r\n")
+            assert "mass_ratio\t" in fallback.input_value()
             page.locator("#parameter-dialog .close-dialog").click()
 
             # During an active edit the exact curve/figure are stale, while the
