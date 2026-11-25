@@ -38,3 +38,7 @@ def test_browser_predictor_matches_frozen_coefficients_at_presets():
     code="""import fs from'node:fs';import{makeLiteratureLocalPredictor}from'./site/experiment/literature-local-predict.mjs';const s=JSON.parse(fs.readFileSync('./site/experiment/literature-local-model.json'));const p=makeLiteratureLocalPredictor(s);console.log(JSON.stringify([p({contact:true,semidetached:false,donor:'primary',inclination:86,mass_ratio:.534,fillout_factor:.134,temperature_ratio:6400/6200,period:.305371,eccentricity:0,irradiation:false}).model,p({contact:false,semidetached:true,donor:'secondary',inclination:87.566,mass_ratio:.4715,radius_primary:.318,radius_secondary:.17,temperature_ratio:4881/7262,period:.8180837,eccentricity:0,irradiation:false}).model]));"""
     actual=json.loads(subprocess.check_output(["node","--input-type=module","-e",code],cwd=ROOT,text=True))
     np.testing.assert_allclose(actual,expected,rtol=3e-12,atol=3e-12)
+
+def test_previous_period_curve_is_not_labeled_as_trained_preview():
+    source=(ROOT/"site/assets/app.js").read_text()
+    assert "if(dragView?.prior)return 'Previous-period PHOEBE curve · current period awaiting native calculation';" in source

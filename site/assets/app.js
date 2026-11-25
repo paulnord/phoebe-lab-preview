@@ -466,6 +466,7 @@ function updateControlValues() {
 }
 
 function previewLabel() {
+  if(dragView?.prior)return 'Previous-period PHOEBE curve · current period awaiting native calculation';
   const confidence=previewTier(dragView),prefix=confidence==='good'?'Green · tested preview':confidence==='caution'?'Amber · caution preview':'Red dashed · unvalidated preview';
   if(state.parameters.contact)return `${prefix} · contact envelope · native validation required`;
   if(state.parameters.semidetached)return `${prefix} · semi-detached · ${state.parameters.donor} donor · native validation required`;
