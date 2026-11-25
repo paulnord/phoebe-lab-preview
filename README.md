@@ -28,8 +28,11 @@ Downloads are subject to the browser's HTTP cache. Keep the tab open while
 calculations finish. Stop ends ordinary refinement after the current batch. For costly tidal or irradiated models it stops the worker immediately.
 
 In Preview quality, drag a supported slider to see a broad, translucent approximate
-curve. Release to calculate the PHOEBE curve. Fitting, residual statistics and CSV
-exports use the current PHOEBE result.
+curve. Release to calculate the PHOEBE curve. Fitting, residual statistics, model CSV,
+and the editable observation/model/residual SVG use the current PHOEBE result. The
+separate parameter JSON/table records either that current exact result or an explicitly
+unfitted snapshot, including geometry, q/epoch definitions, units and provenance without
+invented parameter uncertainties.
 
 - At the default circular orbit, vary inclination, either fractional radius and
   temperature ratio together. Keep the other settings at their defaults.

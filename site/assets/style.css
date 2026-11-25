@@ -340,3 +340,4 @@
   .orbit-controls label,.orbit-scrub { font-size: 11px; }
   .orbit-camera { grid-template-columns: 1fr; }
 }
+.parameter-table-wrap{overflow:auto;max-height:52vh;margin-top:16px;border:1px solid var(--line);border-radius:8px}.parameter-table{border-collapse:collapse;width:100%;font-size:11px}.parameter-table th,.parameter-table td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.parameter-table th{position:sticky;top:0;background:#f7f6f9;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.06em}.parameter-table td:nth-child(2){font-family:ui-monospace,SFMono-Regular,monospace;text-align:right}

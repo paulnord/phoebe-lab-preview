@@ -8,6 +8,7 @@ observable.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 from pathlib import Path
@@ -116,6 +117,34 @@ def main():
             page.locator("#fit-form button[type=submit]").click()
             page.get_by_text("Local fit complete",exact=False).wait_for(timeout=15000)
             assert any(operation=="fit" for _,operation in kernel.calls if operation!="cancel")
+            with page.expect_download() as figure_download:
+                page.locator("#figure-export-button").click()
+            figure=figure_download.value.path().read_text()
+            assert "<svg" in figure and "Authoritative native PHOEBE model" in figure
+            assert "Colab native Python" in figure and "Residual (observed - model)" in figure
+            with page.expect_download() as parameter_download:
+                page.locator("#parameter-export-button").click()
+            parameters=json.loads(parameter_download.value.path().read_text())
+            assert parameters["export_kind"]=="native_fit_result"
+            assert parameters["authority"]["authoritative"] is True
+            assert "inclination" in parameters["fit"]["parameters"]
+            page.locator("#parameter-summary-button").click()
+            assert page.locator("#parameter-table-body tr").count()>5
+            page.locator("#parameter-dialog .close-dialog").click()
+
+            # During an active edit the exact curve/figure are stale, while the
+            # parameter record remains available as an explicitly unfitted snapshot.
+            slider=page.locator("#range-inclination");slider.dispatch_event("pointerdown")
+            slider.evaluate("s=>{s.value='80';s.dispatchEvent(new Event('input',{bubbles:true}))}")
+            assert page.locator("#figure-export-button").is_disabled()
+            assert page.locator("#export-button").is_disabled()
+            assert page.locator("#parameter-export-button").is_enabled()
+            with page.expect_download() as snapshot_download:
+                page.locator("#parameter-export-button").click()
+            snapshot=json.loads(snapshot_download.value.path().read_text())
+            assert snapshot["export_kind"]=="unfitted_parameter_snapshot"
+            assert snapshot["authority"]["authoritative"] is False and snapshot["statistics"] is None
+            slider.dispatch_event("pointerup")
             assert "Colab native engine ready" in page.locator("#engine-pill").inner_text()
             assert not errors,errors
             browser.close()

@@ -8,6 +8,7 @@ import {createScientificEngine,nativeKernelConfig,nativeKernelRequired} from './
 import {applyColabRuntimeUI,applyColabWorkerStatus,canOpenAdvancedWorkspace,isNativeProjectJson,NATIVE_PROJECT_ERROR} from './runtime-mode.mjs?v=worker-capacity1';
 import {geometryPhysicalReason} from '../experiment/preview-confidence.mjs?v=confidence1';
 import {OBSERVATION_EXAMPLES,observationDataset} from './observation-examples.mjs?v=published2';
+import {parameterExport,parameterTable,scientificFigureSvg} from './scientific-export.mjs?v=scientific-export1';
 const $ = (id) => document.getElementById(id);
 const colabNativeMode=nativeKernelRequired;
 applyColabRuntimeUI(document,colabNativeMode);
@@ -105,10 +106,43 @@ function restoreExact() {
   clearDisplay();exactPartial=null;
   showAgreement(preview,saved,true);
   state.result={...saved,revision:state.revision};previousExact=state.result;latestCompleted=state.result;
-  setBusy(false);$('export-button').disabled=false;
+  setBusy(false);updateExportButtons();
   $('plot-placeholder').hidden=true;
   status(`Exact PHOEBE · ${saved.phases.length} phases · restored`);drawPlots();updateStats();
   return true;
+}
+
+function currentExact(){return state.result?.revision===state.revision ? state.result : null;}
+function updateExportButtons(){
+  const exact=!!currentExact();
+  $('export-button').disabled=!exact;
+  $('figure-export-button').disabled=!exact;
+  $('parameter-export-button').disabled=!state.dataset;
+  $('parameter-summary-button').disabled=!state.dataset;
+}
+
+function parameterRecord(){
+  const result=currentExact();
+  return parameterExport({parameters:{...state.parameters},dataset:state.dataset,result,
+    quality:state.quality,nativePhases:plotPhases(),
+    runtime:colabNativeMode?'Colab native Python':'Browser WebAssembly'});
+}
+
+function downloadParameterRecord(){
+  if(!state.dataset)return;
+  download('phoebe-parameters.json',JSON.stringify(parameterRecord(),null,2));
+}
+
+function showParameterRecord(){
+  if(!state.dataset)return;
+  const report=parameterRecord(),body=$('parameter-table-body');body.replaceChildren();
+  for(const row of parameterTable(report)){
+    const tr=document.createElement('tr');
+    for(const value of [row.parameter,row.value,row.unit,row.role]){const td=document.createElement('td');td.textContent=value;tr.append(td);}
+    body.append(tr);
+  }
+  $('parameter-authority').textContent=report.authority.statement;
+  $('parameter-dialog').showModal();
 }
 const legend = document.querySelector('.chart-legend span:last-child');
 
@@ -518,7 +552,7 @@ function parametersChanged(slider=false,physics=false,key=null) {
   if(physics && key==='geometry' && !interrupt){clearTimeout(engineRestartTimer);engineRestartTimer=null;}
   exactPartial=null;
   state.revision++;
-  $('export-button').disabled=true;
+  updateExportButtons();
   $('fit-button').disabled=true;
   timingRevision=key==='epoch'||key==='period' ? state.revision : -1;
   liveTiming=timingRevision===state.revision ? timingDisplay() : null;
@@ -694,7 +728,7 @@ function startEngine() {
         clearDisplay();exactPartial=null;state.result=data.result;
         showAgreement(preview,state.result,true);state.result.revision=state.revision;
         rememberExact(state.result);
-        $('plot-placeholder').hidden=true;$('export-button').disabled=false;$('fit-button').disabled=false;
+        $('plot-placeholder').hidden=true;$('fit-button').disabled=false;updateExportButtons();
         let text=`${data.result.quality==='refined'?'Refined':'Preview'} model · ${data.result.phases.length} phases · ${data.result.seconds.toFixed(1)} s`;
         if(data.result.surface_workers>1)text+= ' · '+data.result.surface_workers+' workers';
         if(data.result.source==='reused_geometry')text=`Exact PHOEBE · ${data.result.phases.length} phases · updated observation comparison`;
@@ -742,7 +776,7 @@ function requestModel(type='compute',fit=[]) {
   if(type==='fit'){previousReference=latestFit||latestCompleted;clearDisplay();liveTiming=null;timingRevision=-1;}
   else if(!dragView) refreshPreview();
   if(type==='fit' && previousExact)labelCurve('Previous PHOEBE curve · fitting');
-  $('export-button').disabled=true;updateStats();drawPlots();
+  updateExportButtons();updateStats();drawPlots();
   const id=++state.request;
   const plotCount=type==='fit' ? 513 : plotPhases();
   state.current={id,revision:state.revision,type,plotCount,mode:modeOf(state.parameters),tides:state.parameters.distortion,heating:state.parameters.irradiation};state.queued=false;setBusy(true,type==='fit');
@@ -974,7 +1008,7 @@ function installDataset(dataset,parameters=null) {
     const origin=dataset.synthetic?'Synthetic PHOEBE':dataset.provenance.catalog==='Kepler Eclipsing Binary Catalog, third revision'?'Kepler observations':'Observations';
     $('dataset-description').textContent=origin+' · '+dataset.x.length+' points · '+dataset.description;
   }
-  $('export-button').disabled=true;$('fit-button').disabled=true;refreshPreview();requestModel('compute');
+  $('fit-button').disabled=true;updateExportButtons();refreshPreview();requestModel('compute');
 }
 
 function validateDataset(d) {
@@ -1099,10 +1133,21 @@ function bindEvents() {
   for(const button of document.querySelectorAll('.quality'))button.onclick=()=>{state.quality=button.dataset.quality;document.querySelectorAll('.quality').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});parametersChanged();scheduleCompute(50);};
   $('save-button').onclick=()=>{if(!state.dataset){toast('Load observations first.');return;}download('phoebe-lab-session.json',JSON.stringify({schema:'phoebe-lab-session-v1',parameters:state.parameters,dataset:state.dataset,quality:state.quality,tidal_phases:Number($('tidal-phases').value)},null,2));};
   $('export-button').onclick=()=>{
-    if(state.result?.revision!==state.revision)return;
+    if(!currentExact())return;
     const runtime=state.result.runtime || (colabNativeMode?'Colab native Python':'Browser WebAssembly');
     const quoted='"'+String(runtime).replaceAll('"','""')+'"';
     download('phoebe-model.csv','phase,normalized_flux,engine_runtime\n'+state.result.phases.map((x,i)=>`${x},${state.result.model[i]},${quoted}`).join('\n')+'\n','text/csv');
+  };
+  $('figure-export-button').onclick=()=>{
+    const result=currentExact();if(!result)return;
+    download('phoebe-light-curve.svg',scientificFigureSvg({datasetName:state.dataset?.name,result}),'image/svg+xml');
+  };
+  $('parameter-export-button').onclick=downloadParameterRecord;
+  $('parameter-summary-button').onclick=showParameterRecord;
+  $('download-parameters-dialog').onclick=downloadParameterRecord;
+  $('copy-parameters').onclick=async()=>{
+    try{await navigator.clipboard.writeText(JSON.stringify(parameterRecord(),null,2));toast('Copied parameter JSON.');}
+    catch{toast('Clipboard access was unavailable. Use Download JSON.');}
   };
   $('stop-button').onclick=()=>{if(state.current?.type==='compute') {
     if(state.current.mode!=='detached'||state.current.tides||state.current.heating){

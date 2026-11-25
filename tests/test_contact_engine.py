@@ -59,5 +59,7 @@ def test_cross_mode_change_invalidates_exact_outputs_in_ui_source():
     assert "state.current.mode!==modeOf(state.parameters)" in source
     assert "requestMatches(current,state.revision,modeOf(state.parameters))" in source
     assert "state.revision++;" in source
-    assert "$('export-button').disabled=true" in source
+    assert "state.revision++;\n  updateExportButtons();" in source
+    assert "$('export-button').disabled=!exact" in source
+    assert "$('figure-export-button').disabled=!exact" in source
     assert "updateStats()" in source
