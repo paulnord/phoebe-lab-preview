@@ -1,0 +1,56 @@
+{
+  "base_revision": "fe9e3684eef2ba5ab7ab2aafee448a1f26abda98",
+  "blackbody_floor_continuity": {
+    "temperature_floor_K": 316.2277660168379,
+    "immediately_below_K": 316.22776601683785,
+    "photon": {
+      "direct_vs_native_relative": 3.1086244689504383e-15,
+      "below_to_floor_relative_jump": 9.658940314238862e-15
+    },
+    "energy": {
+      "direct_vs_native_relative": 3.552713678800501e-15,
+      "below_to_floor_relative_jump": 8.881784197001252e-15
+    }
+  },
+  "candidate": "opt-in-direct-low-temperature-planck",
+  "environment": {
+    "libphoebe_sha256": "ec66f7b8cdff53f9e84ded4b3b2c684632cd710835ff8322e1f1e2f9ddb5169d",
+    "numpy": "2.5.5",
+    "observation_sha256": "7cddf77b51037157490fcf4e9d68f8c5d0ef4a141ea44fd852f97a3fd47b1a91",
+    "phoebe": "2.5.4",
+    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "python": "3.12.14"
+  },
+  "natural_runtime_candidate": {"finite": 5, "samples": 5},
+  "original_exact_axis": {"finite": 0, "samples": 5},
+  "resolution_convergence": {
+    "normalized_max_abs": 0.000893212944216959,
+    "normalized_rms": 0.00040104502258593306,
+    "secondary_pblum_abs_ratio_preview_over_refined": 1.0004456742229972
+  },
+  "status": "PASS",
+  "sz_her": {
+    "Preview": {
+      "finite": 129,
+      "requested_ntriangles": 800,
+      "samples": 129,
+      "pbflux": 1.1054158181058433,
+      "secondary_pblum_abs": 1.4515962762319395e25,
+      "residual_rms": 0.02024393115941639,
+      "residual_max_abs": 0.07349181967400853
+    },
+    "Refined": {
+      "finite": 513,
+      "requested_ntriangles": 1500,
+      "samples": 513,
+      "pbflux": 1.1053688309277663,
+      "secondary_pblum_abs": 1.4509496253850377e25,
+      "residual_rms": 0.020201248750283382,
+      "residual_max_abs": 0.0728322210667115
+    }
+  },
+  "unchanged_controls": {
+    "contact": {"array_equal": true, "max_abs_difference": 0.0, "samples": 129},
+    "detached": {"array_equal": true, "max_abs_difference": 0.0, "samples": 129}
+  }
+}
